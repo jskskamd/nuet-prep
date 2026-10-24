@@ -17,6 +17,11 @@ if (tg) {
 const STORE_KEY = "nuetprep:v2";
 const OLD_STORE_KEY = "nuetprep:v1"; // progress only, from before sign-up existed
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+// From NU's admissions page (cps.nu.edu.kz/admissions): a state grant needs
+// at least 50 in each section and 120 in total.
+const SECTION_MIN = 50;
+const GRANT_TOTAL = 120;
+const SCORE_INPUT_MAX = 200; // sanity limit for typed-in scores; NU doesn't publish a maximum
 const TYPE_INFO = {
   lesson: { label: "Lesson", icon: "i-book" },
   link: { label: "Resource", icon: "i-link" },
@@ -47,14 +52,19 @@ const tgUser = tg && tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
 
 // ---------- State (saved in this device's browser storage) ----------
 
+// mocks: mock test results the student typed in; attempts: finished in-app practice quizzes.
+function freshState() {
+  return { profile: null, done: [], mocks: [], attempts: [] };
+}
+
 function loadState() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) return { ...freshState(), ...JSON.parse(raw) };
     const oldDone = JSON.parse(localStorage.getItem(OLD_STORE_KEY) || "[]");
-    return { profile: null, done: oldDone };
+    return { ...freshState(), done: oldDone };
   } catch (e) {
-    return { profile: null, done: [] };
+    return freshState();
   }
 }
 
@@ -151,6 +161,7 @@ function render() {
   $("#btn-back").hidden = stack.length === 0;
   setTelegramBack(stack.length > 0);
   window.scrollTo(0, 0);
+  drawMockChart();
 }
 
 // ---------- Views ----------
@@ -280,6 +291,9 @@ function profileHTML() {
       <div><b>${ctps.finished}</b><span>CTPS</span></div>
     </section>
 
+    ${mockStatsHTML()}
+    ${practiceStatsHTML()}
+
     <section class="panel">
       <h2 class="list-title">About you</h2>
       ${rows}
@@ -288,6 +302,262 @@ function profileHTML() {
     <p class="note">Your profile and progress are saved on this device.</p>
     <button class="ghost danger" data-delete-account>Delete my account</button>`;
 }
+
+// ---------- Statistics ----------
+
+const total = (r) => r.math + r.ctps;
+
+function sortedMocks() {
+  return [...state.mocks].sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
+}
+
+function shortDate(iso) {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+function statusRow(ok, text) {
+  return `<div class="status ${ok ? "good" : "warn"}">${icon(ok ? "i-check" : "i-alert")}<span>${esc(text)}</span></div>`;
+}
+
+function mockStatsHTML() {
+  const mocks = sortedMocks();
+  if (!mocks.length) {
+    return `
+      <section class="panel stat-panel">
+        <h2 class="list-title">Mock test scores</h2>
+        <p class="hint">Log your NUET mock test scores to track your progress toward the grant threshold:
+          at least ${SECTION_MIN} in each section and ${GRANT_TOTAL} in total.</p>
+        <button class="primary" data-add-mock>${icon("i-plus")} Add mock test result</button>
+      </section>`;
+  }
+
+  const latest = mocks[mocks.length - 1];
+  const best = Math.max(...mocks.map(total));
+  const gap = GRANT_TOTAL - total(latest);
+  const sectionStatus = (name, score) => score >= SECTION_MIN
+    ? statusRow(true, `${name}: ${score}, above the ${SECTION_MIN} minimum`)
+    : statusRow(false, `${name}: ${score}, ${SECTION_MIN - score} below the ${SECTION_MIN} minimum`);
+
+  const rows = [...mocks].reverse().map((r) => `
+    <tr>
+      <td><span>${esc(shortDate(r.date))}</span>${r.name ? `<small>${esc(r.name)}</small>` : ""}</td>
+      <td class="num">${r.math}</td>
+      <td class="num">${r.ctps}</td>
+      <td class="num"><b>${total(r)}</b></td>
+      <td><button class="row-delete" data-delete-mock="${r.id}" aria-label="Delete result">${icon("i-x")}</button></td>
+    </tr>`).join("");
+
+  return `
+    <section class="panel stat-panel">
+      <h2 class="list-title">Mock test scores</h2>
+      <div class="tiles">
+        <div class="tile"><span class="hint">Latest total</span><b>${total(latest)}</b></div>
+        <div class="tile"><span class="hint">Best total</span><b>${best}</b></div>
+        <div class="tile"><span class="hint">Tests logged</span><b>${mocks.length}</b></div>
+      </div>
+
+      <div class="statuses">
+        ${gap <= 0
+          ? statusRow(true, `Latest total meets the ${GRANT_TOTAL}-point grant threshold`)
+          : statusRow(false, `Latest total is ${gap} points below the ${GRANT_TOTAL}-point grant threshold`)}
+        ${sectionStatus("Math", latest.math)}
+        ${sectionStatus("CTPS", latest.ctps)}
+      </div>
+
+      <h3 class="chart-title">Total score over time</h3>
+      <p class="hint small chart-sub">The line marks the ${GRANT_TOTAL}-point grant threshold.</p>
+      <div class="chart" id="mock-chart"></div>
+
+      <div class="table-wrap">
+        <table class="results">
+          <thead><tr><th>Date</th><th class="num">Math</th><th class="num">CTPS</th><th class="num">Total</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <button class="secondary" data-add-mock>${icon("i-plus")} Add result</button>
+    </section>`;
+}
+
+function practiceStatsHTML() {
+  const attempts = state.attempts;
+  const pct = (a) => Math.round((a.correct / a.total) * 100);
+  if (!attempts.length) {
+    return `
+      <section class="panel stat-panel">
+        <h2 class="list-title">Practice quizzes</h2>
+        <p class="hint">Finish a practice quiz in Math or CTPS and your scores will show up here.</p>
+      </section>`;
+  }
+  const avg = (list) => Math.round(list.reduce((s, a) => s + pct(a), 0) / list.length);
+  const perSection = SECTIONS.map((s) => {
+    const list = attempts.filter((a) => a.section === s.id);
+    return `
+      <div class="info-row">
+        <span class="hint">${esc(s.short)}</span>
+        <strong>${list.length ? `${avg(list)}% average · ${list.length} ${list.length === 1 ? "quiz" : "quizzes"}` : "No quizzes yet"}</strong>
+      </div>`;
+  }).join("");
+
+  return `
+    <section class="panel stat-panel">
+      <h2 class="list-title">Practice quizzes</h2>
+      <div class="tiles">
+        <div class="tile"><span class="hint">Quizzes finished</span><b>${attempts.length}</b></div>
+        <div class="tile"><span class="hint">Average score</span><b>${avg(attempts)}%</b></div>
+        <div class="tile"><span class="hint">Best score</span><b>${Math.max(...attempts.map(pct))}%</b></div>
+      </div>
+      ${perSection}
+    </section>`;
+}
+
+// Line chart of total mock score over time, with the grant threshold as a reference line.
+function drawMockChart() {
+  const el = $("#mock-chart");
+  if (!el) return;
+  const mocks = sortedMocks();
+  const W = el.clientWidth || 320;
+  const H = 190;
+  const m = { l: 34, r: 20, t: 18, b: 26 };
+  const totals = mocks.map(total);
+  const step = 40;
+  const yMax = Math.ceil((Math.max(...totals, GRANT_TOTAL) * 1.12) / step) * step;
+  const x = (i) => mocks.length === 1 ? (m.l + W - m.r) / 2 : m.l + (i * (W - m.l - m.r)) / (mocks.length - 1);
+  const y = (v) => m.t + (1 - v / yMax) * (H - m.t - m.b);
+  const base = y(0);
+
+  let grid = "";
+  for (let v = 0; v <= yMax; v += step) {
+    grid += `<line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"/>
+             <text class="tick" x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+  }
+
+  const pts = totals.map((t, i) => [x(i), y(t)]);
+  const linePath = pts.map(([px, py], i) => `${i ? "L" : "M"}${px},${py}`).join(" ");
+  const area = pts.length > 1
+    ? `<path class="area" d="${linePath} L${pts[pts.length - 1][0]},${base} L${pts[0][0]},${base} Z"/>` : "";
+  const dots = pts.map(([px, py]) => `<circle class="dot" cx="${px}" cy="${py}" r="4"/>`).join("");
+  const [lx, ly] = pts[pts.length - 1];
+  const xLabels = (mocks.length > 1 ? [0, mocks.length - 1] : [0]).map((i) =>
+    `<text class="tick" x="${x(i)}" y="${H - 6}" text-anchor="${mocks.length > 1 ? (i ? "end" : "start") : "middle"}">${esc(shortDate(mocks[i].date))}</text>`
+  ).join("");
+
+  el.innerHTML = `
+    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img"
+         aria-label="Total mock test score over time. The table below lists every result.">
+      ${grid}
+      <line class="threshold" x1="${m.l}" x2="${W - m.r}" y1="${y(GRANT_TOTAL)}" y2="${y(GRANT_TOTAL)}"/>
+      <text class="threshold-label" x="${m.l + 4}" y="${y(GRANT_TOTAL) - 6}">Grant ${GRANT_TOTAL}</text>
+      ${area}
+      ${pts.length > 1 ? `<path class="line" d="${linePath}"/>` : ""}
+      ${dots}
+      <text class="end-label" x="${lx}" y="${ly - 12}" text-anchor="${mocks.length > 1 ? "end" : "middle"}">${totals[totals.length - 1]}</text>
+      ${xLabels}
+      <line class="crosshair" y1="${m.t}" y2="${base}" visibility="hidden"/>
+      <circle class="dot focus" r="6" visibility="hidden"/>
+      <rect class="hit" x="0" y="0" width="${W}" height="${H}"/>
+    </svg>
+    <div class="tooltip" hidden></div>`;
+
+  const svg = el.querySelector("svg");
+  const cross = el.querySelector(".crosshair");
+  const focus = el.querySelector(".dot.focus");
+  const tip = el.querySelector(".tooltip");
+
+  const show = (e) => {
+    const box = svg.getBoundingClientRect();
+    const px = e.clientX - box.left;
+    let i = 0;
+    pts.forEach(([ptx], j) => { if (Math.abs(ptx - px) < Math.abs(pts[i][0] - px)) i = j; });
+    const r = mocks[i];
+    cross.setAttribute("x1", pts[i][0]);
+    cross.setAttribute("x2", pts[i][0]);
+    cross.setAttribute("visibility", "visible");
+    focus.setAttribute("cx", pts[i][0]);
+    focus.setAttribute("cy", pts[i][1]);
+    focus.setAttribute("visibility", "visible");
+
+    // Built with textContent: test names are typed in by the student.
+    tip.replaceChildren();
+    const head = document.createElement("div");
+    head.className = "tip-head";
+    head.textContent = r.name ? `${shortDate(r.date)} · ${r.name}` : shortDate(r.date);
+    const value = document.createElement("div");
+    value.className = "tip-value";
+    value.textContent = `${total(r)} total`;
+    const detail = document.createElement("div");
+    detail.className = "tip-detail";
+    detail.textContent = `Math ${r.math} · CTPS ${r.ctps}`;
+    tip.append(head, value, detail);
+    tip.hidden = false;
+    const left = Math.min(Math.max(pts[i][0] - tip.offsetWidth / 2, 0), W - tip.offsetWidth);
+    tip.style.left = `${left}px`;
+    tip.style.top = `${Math.max(pts[i][1] - tip.offsetHeight - 14, 0)}px`;
+  };
+  const hide = () => {
+    cross.setAttribute("visibility", "hidden");
+    focus.setAttribute("visibility", "hidden");
+    tip.hidden = true;
+  };
+  const hit = el.querySelector(".hit");
+  hit.addEventListener("pointermove", show);
+  hit.addEventListener("pointerdown", show);
+  hit.addEventListener("pointerleave", hide);
+}
+
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(drawMockChart, 150);
+});
+
+// ---------- Mock result form ----------
+
+function openMockForm() {
+  $("#mock-name").value = "";
+  const now = new Date(); // local date, not UTC
+  $("#mock-date").value = [now.getFullYear(), now.getMonth() + 1, now.getDate()]
+    .map((n) => String(n).padStart(2, "0")).join("-");
+  $("#mock-math").value = "";
+  $("#mock-ctps").value = "";
+  $("#mock-error").textContent = "";
+  updateMockTotal();
+  $("#mock-modal").hidden = false;
+}
+
+function readScore(input) {
+  const raw = input.value.trim();
+  if (raw === "") return null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 && n <= SCORE_INPUT_MAX ? n : NaN;
+}
+
+function updateMockTotal() {
+  const math = readScore($("#mock-math"));
+  const ctps = readScore($("#mock-ctps"));
+  $("#mock-total").textContent = Number.isInteger(math) && Number.isInteger(ctps)
+    ? `Total: ${math + ctps}` : "Total: –";
+}
+
+$("#mock-math").addEventListener("input", updateMockTotal);
+$("#mock-ctps").addEventListener("input", updateMockTotal);
+$("#mock-cancel").addEventListener("click", () => { $("#mock-modal").hidden = true; });
+
+$("#mock-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const date = $("#mock-date").value;
+  const math = readScore($("#mock-math"));
+  const ctps = readScore($("#mock-ctps"));
+  const error = (msg) => { $("#mock-error").textContent = msg; haptic("error"); };
+  if (!date) return error("Please choose the date of the test.");
+  if (math === null || ctps === null) return error("Please enter both section scores.");
+  if (Number.isNaN(math) || Number.isNaN(ctps)) return error(`Scores must be whole numbers from 0 to ${SCORE_INPUT_MAX}.`);
+
+  state.mocks.push({ id: Date.now(), name: $("#mock-name").value.trim(), date, math, ctps });
+  save();
+  haptic("success");
+  $("#mock-modal").hidden = true;
+  render();
+});
 
 // ---------- Practice quizzes ----------
 
@@ -358,6 +628,26 @@ $("#view").addEventListener("click", (e) => {
 
   if (t.dataset.editProfile !== undefined) return showOnboarding();
 
+  if (t.dataset.addMock !== undefined) return openMockForm();
+
+  // Deleting a mock result needs a second tap within 3 seconds.
+  if (t.dataset.deleteMock) {
+    if (!t.classList.contains("armed")) {
+      t.classList.add("armed");
+      t.setAttribute("aria-label", "Tap again to delete");
+      haptic("rigid");
+      setTimeout(() => t.classList.remove("armed"), 3000);
+      return;
+    }
+    const id = Number(t.dataset.deleteMock);
+    state.mocks = state.mocks.filter((r) => r.id !== id);
+    save();
+    const y = window.scrollY;
+    render();
+    window.scrollTo(0, y);
+    return;
+  }
+
   // Delete needs a second tap within 3 seconds.
   if (t.dataset.deleteAccount !== undefined) {
     if (!deleteTimer) {
@@ -368,7 +658,7 @@ $("#view").addEventListener("click", (e) => {
     }
     clearTimeout(deleteTimer);
     deleteTimer = null;
-    state = { profile: null, done: [] };
+    state = freshState();
     done = new Set();
     save();
     return showOnboarding();
@@ -390,8 +680,10 @@ $("#view").addEventListener("click", (e) => {
     const oi = Number(t.dataset.o);
     quizAnswers[qi] = oi;
     haptic(oi === m.questions[qi].answer ? "success" : "error");
-    // Finishing every question counts the quiz as done.
+    // Finishing every question counts the quiz as done and records the score.
     if (Object.keys(quizAnswers).length === m.questions.length) {
+      const correct = m.questions.filter((q, i) => quizAnswers[i] === q.answer).length;
+      state.attempts.push({ key: materialKey(s, route.index), section: s.id, correct, total: m.questions.length, at: Date.now() });
       done.add(materialKey(s, route.index));
       save();
     }
