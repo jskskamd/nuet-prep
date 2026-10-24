@@ -42,8 +42,10 @@ const STEPS = [
     options: [["10", "Grade 10"], ["11", "Grade 11"], ["12", "Grade 12"], ["graduated", "Already graduated"]] },
   { id: "mock", type: "choice", label: "Mock tests", title: "Have you ever done an NUET mock test?",
     options: [["several", "Yes, several times"], ["once", "Yes, once"], ["never", "No, not yet"]] },
-  { id: "testDate", type: "choice", label: "Taking the NUET", title: "When do you plan to take the NUET?",
-    options: [["1m", "Within a month"], ["3m", "In 1–3 months"], ["6m", "In 3–6 months"], ["unsure", "Not sure yet"]] },
+  { id: "city", type: "choice", label: "City", title: "Which city are you from?",
+    options: ["Astana", "Almaty", "Shymkent", "Aktau", "Aktobe", "Atyrau", "Karaganda", "Kokshetau", "Konaev",
+      "Kostanay", "Kyzylorda", "Oral", "Oskemen", "Pavlodar", "Petropavl", "Semey", "Taldykorgan", "Taraz",
+      "Turkistan", "Zhezkazgan"].map((c) => [c, c]).concat([["other", "Another city"]]) },
   { id: "focus", type: "choice", label: "Focus", title: "Which section do you want to focus on?",
     options: [["math", "Mathematics"], ["ctps", "Critical Thinking & Problem Solving"], ["both", "Both equally"]] },
 ];
