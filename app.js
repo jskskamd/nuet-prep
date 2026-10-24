@@ -22,6 +22,10 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const SECTION_MIN = 50;
 const GRANT_TOTAL = 120;
 const SCORE_INPUT_MAX = 200; // sanity limit for typed-in scores; NU doesn't publish a maximum
+// Same page: 60 questions in 120 minutes, so the exam pace is 2 minutes per question.
+const NUET_QUESTIONS = 60;
+const NUET_MINUTES = 120;
+const QUESTION_TIME_CAP = 600; // seconds; longer gaps are breaks, not thinking time
 const TYPE_INFO = {
   lesson: { label: "Lesson", icon: "i-book" },
   link: { label: "Resource", icon: "i-link" },
@@ -52,9 +56,30 @@ const tgUser = tg && tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
 
 // ---------- State (saved in this device's browser storage) ----------
 
-// mocks: mock test results the student typed in; attempts: finished in-app practice quizzes.
+// mocks: mock test results the student typed in; attempts: finished in-app practice quizzes;
+// targets: { math, ctps } goal scores; examDate: "YYYY-MM-DD"; mistakes: the mistake notebook.
 function freshState() {
-  return { profile: null, done: [], mocks: [], attempts: [] };
+  return { profile: null, done: [], mocks: [], attempts: [], targets: null, examDate: "", mistakes: [] };
+}
+
+function todayISO() {
+  const now = new Date(); // local date, not UTC
+  return [now.getFullYear(), now.getMonth() + 1, now.getDate()]
+    .map((n) => String(n).padStart(2, "0")).join("-");
+}
+
+function daysUntil(iso) {
+  return Math.round((new Date(`${iso}T00:00:00`) - new Date(`${todayISO()}T00:00:00`)) / 86400000);
+}
+
+function longDate(iso) {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+}
+
+// 84 -> "1:24"
+function formatSeconds(sec) {
+  const s = Math.round(sec);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
 function loadState() {
@@ -150,9 +175,11 @@ function render() {
   if (route.view === "section") view.innerHTML = sectionHTML(findSection(route.sectionId));
   else if (route.view === "material") view.innerHTML = materialHTML(findSection(route.sectionId), route.index);
   else if (route.view === "profile") view.innerHTML = profileHTML();
+  else if (route.view === "notebook") view.innerHTML = notebookHTML();
   else view.innerHTML = homeHTML();
 
-  const activeTab = route.view === "home" || route.view === "profile" ? route.view : route.sectionId;
+  const activeTab = route.view === "notebook" ? "home"
+    : route.view === "home" || route.view === "profile" ? route.view : route.sectionId;
   document.querySelectorAll(".tabs button").forEach((b) => {
     if (b.dataset.tab === activeTab) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
@@ -195,9 +222,153 @@ function homeHTML() {
       <h1>Get ready for the NUET</h1>
       <p class="hint">Study materials and practice for both test sections, all in Telegram.</p>
     </section>
+    ${countdownHTML()}
+    ${targetsHTML()}
+    ${notebookCardHTML()}
     <h2 class="list-title">Sections</h2>
     <div class="section-list">${cards}</div>
     <p class="note">New materials are added regularly. Check back soon.</p>`;
+}
+
+// ---------- Home cards: countdown, targets, mistake notebook ----------
+
+function countdownHTML() {
+  if (!state.examDate) {
+    return `
+      <button class="home-card" data-sheet="exam">
+        <span class="section-icon">${icon("i-calendar")}</span>
+        <span class="section-text">
+          <strong>When is your NUET?</strong>
+          <span class="hint">Set your exam date to start the countdown.</span>
+        </span>
+        ${icon("i-next", "icon chevron")}
+      </button>`;
+  }
+  const days = daysUntil(state.examDate);
+  let number = String(days);
+  let label = `${days === 1 ? "day" : "days"} left until the NUET`;
+  if (days === 0) { number = "0"; label = "Exam day. Good luck!"; }
+  if (days < 0) { number = "–"; label = "Your exam date has passed"; }
+  return `
+    <button class="countdown" data-sheet="exam">
+      <span class="countdown-num">${number}</span>
+      <span class="countdown-text">
+        <strong>${label}</strong>
+        <span class="hint small">${esc(longDate(state.examDate))} · tap to change</span>
+      </span>
+    </button>`;
+}
+
+function latestMock() {
+  const mocks = sortedMocks();
+  return mocks.length ? mocks[mocks.length - 1] : null;
+}
+
+function targetsHTML() {
+  const t = state.targets;
+  if (!t) {
+    return `
+      <button class="home-card" data-sheet="targets">
+        <span class="section-icon">${icon("i-target")}</span>
+        <span class="section-text">
+          <strong>Set your target scores</strong>
+          <span class="hint">Choose the Math and CTPS scores you're aiming for.</span>
+        </span>
+        ${icon("i-next", "icon chevron")}
+      </button>`;
+  }
+  const latest = latestMock();
+  const row = (name, target, score) => {
+    const pct = score === null ? 0 : Math.min(100, Math.round((score / target) * 100));
+    const note = score === null ? "Log a mock test to compare"
+      : score >= target ? `Reached with ${score}` : `Latest ${score} · ${target - score} to go`;
+    return `
+      <div class="target-row">
+        <div class="target-head"><span>${name}</span><b>${target}</b></div>
+        <div class="meter"><div class="meter-fill" style="width:${pct}%"></div></div>
+        <span class="hint small">${esc(note)}</span>
+      </div>`;
+  };
+  const targetTotal = t.math + t.ctps;
+  const grant = targetTotal >= GRANT_TOTAL && t.math >= SECTION_MIN && t.ctps >= SECTION_MIN
+    ? statusRow(true, `Total target ${targetTotal} meets the grant thresholds`)
+    : statusRow(false, `Aim for at least ${SECTION_MIN} per section and ${GRANT_TOTAL} in total for a state grant`);
+  return `
+    <section class="home-panel">
+      <div class="panel-head">
+        <h2 class="list-title">${icon("i-target", "icon tiny")} Target scores</h2>
+        <button class="link-btn" data-sheet="targets">Edit</button>
+      </div>
+      ${row("Math", t.math, latest ? latest.math : null)}
+      ${row("CTPS", t.ctps, latest ? latest.ctps : null)}
+      ${grant}
+    </section>`;
+}
+
+function notebookCardHTML() {
+  const open = state.mistakes.filter((m) => !m.mastered).length;
+  const text = open ? `${open} ${open === 1 ? "mistake" : "mistakes"} to review`
+    : state.mistakes.length ? "Everything mastered. Nice work!"
+    : "Write down your mistakes and learn from them.";
+  return `
+    <button class="home-card" data-open-notebook>
+      <span class="section-icon">${icon("i-notebook")}</span>
+      <span class="section-text">
+        <strong>Mistake notebook</strong>
+        <span class="hint">${esc(text)}</span>
+      </span>
+      ${open ? `<span class="count">${open}</span>` : ""}
+      ${icon("i-next", "icon chevron")}
+    </button>`;
+}
+
+// ---------- Mistake notebook ----------
+
+const NOTEBOOK_FILTERS = [["open", "To review"], ["math", "Math"], ["ctps", "CTPS"], ["mastered", "Mastered"]];
+let notebookFilter = "open";
+
+function notebookHTML() {
+  const list = state.mistakes.filter((m) =>
+    notebookFilter === "mastered" ? m.mastered
+      : !m.mastered && (notebookFilter === "open" || m.section === notebookFilter));
+
+  const chips = NOTEBOOK_FILTERS.map(([id, label]) =>
+    `<button class="filter${notebookFilter === id ? " on" : ""}" data-filter="${id}">${label}</button>`).join("");
+
+  const items = list.map((m) => {
+    const section = findSection(m.section);
+    return `
+      <article class="mistake${m.mastered ? " mastered" : ""}">
+        <div class="mistake-top">
+          <span class="tag">${esc(section ? section.short : m.section)}</span>
+          <span class="hint small">${esc(m.source || "My note")} · ${esc(shortDate(m.date))}</span>
+        </div>
+        <p class="mistake-q">${esc(m.question)}</p>
+        ${m.yourAnswer ? `<p class="answer-line"><span class="hint">Your answer</span> ${esc(m.yourAnswer)}</p>` : ""}
+        ${m.correctAnswer ? `<p class="answer-line"><span class="hint">Correct</span> ${esc(m.correctAnswer)}</p>` : ""}
+        ${m.note ? `<p class="mistake-note">${esc(m.note)}</p>` : ""}
+        <div class="mistake-actions">
+          <button class="secondary small-btn" data-master="${m.id}">
+            ${m.mastered ? "Review again" : `${icon("i-check")} Mastered`}
+          </button>
+          <button class="row-delete" data-delete-mistake="${m.id}" aria-label="Delete">${icon("i-x")}</button>
+        </div>
+      </article>`;
+  }).join("");
+
+  const emptyText = notebookFilter === "mastered"
+    ? "Mistakes you've mastered will move here."
+    : "Nothing to review here. Wrong answers in practice quizzes are added automatically, and you can add your own from mock tests.";
+
+  return `
+    <section class="section-head">
+      <span class="section-icon big">${icon("i-notebook")}</span>
+      <h1>Mistake notebook</h1>
+      <p class="hint">Write down each mistake and what you learned. Review them until they stick.</p>
+    </section>
+    <button class="primary" data-sheet="mistake">${icon("i-plus")} Add a mistake</button>
+    <div class="filters">${chips}</div>
+    ${list.length ? `<div class="mistake-list">${items}</div>` : `<div class="empty"><p class="hint">${emptyText}</p></div>`}`;
 }
 
 function sectionHTML(s) {
@@ -293,6 +464,7 @@ function profileHTML() {
 
     ${mockStatsHTML()}
     ${practiceStatsHTML()}
+    ${timeStatsHTML()}
 
     <section class="panel">
       <h2 class="list-title">About you</h2>
@@ -410,6 +582,37 @@ function practiceStatsHTML() {
     </section>`;
 }
 
+function timeStatsHTML() {
+  const pace = (NUET_MINUTES * 60) / NUET_QUESTIONS;
+  const timed = state.attempts.filter((a) => a.seconds);
+  const practice = timed.length
+    ? timed.reduce((s, a) => s + a.seconds, 0) / timed.reduce((s, a) => s + a.total, 0) : null;
+  // A full mock is 60 questions, so minutes used / 60 is the time per question.
+  const mocksTimed = state.mocks.filter((r) => r.minutes);
+  const mock = mocksTimed.length
+    ? (mocksTimed.reduce((s, r) => s + r.minutes, 0) * 60) / (mocksTimed.length * NUET_QUESTIONS) : null;
+
+  const verdict = (label, sec) => sec === null ? "" : sec <= pace
+    ? statusRow(true, `${label}: ${formatSeconds(sec)} is within the NUET pace`)
+    : statusRow(false, `${label}: ${formatSeconds(sec - pace)} slower than the NUET pace`);
+
+  return `
+    <section class="panel stat-panel">
+      <h2 class="list-title">Time per question</h2>
+      <div class="tiles">
+        <div class="tile"><span class="hint">Practice</span><b>${practice === null ? "–" : formatSeconds(practice)}</b></div>
+        <div class="tile"><span class="hint">Mock tests</span><b>${mock === null ? "–" : formatSeconds(mock)}</b></div>
+        <div class="tile"><span class="hint">NUET pace</span><b>${formatSeconds(pace)}</b></div>
+      </div>
+      <div class="statuses">
+        ${verdict("Practice", practice)}
+        ${verdict("Mock tests", mock)}
+      </div>
+      <p class="hint small">The NUET has ${NUET_QUESTIONS} questions in ${NUET_MINUTES} minutes.
+        Practice time is measured automatically; for mock tests, add the minutes you used when you log a result.</p>
+    </section>`;
+}
+
 // Line chart of total mock score over time, with the grant threshold as a reference line.
 function drawMockChart() {
   const el = $("#mock-chart");
@@ -514,11 +717,10 @@ window.addEventListener("resize", () => {
 
 function openMockForm() {
   $("#mock-name").value = "";
-  const now = new Date(); // local date, not UTC
-  $("#mock-date").value = [now.getFullYear(), now.getMonth() + 1, now.getDate()]
-    .map((n) => String(n).padStart(2, "0")).join("-");
+  $("#mock-date").value = todayISO();
   $("#mock-math").value = "";
   $("#mock-ctps").value = "";
+  $("#mock-minutes").value = "";
   $("#mock-error").textContent = "";
   updateMockTotal();
   $("#mock-modal").hidden = false;
@@ -551,17 +753,163 @@ $("#mock-form").addEventListener("submit", (e) => {
   if (!date) return error("Please choose the date of the test.");
   if (math === null || ctps === null) return error("Please enter both section scores.");
   if (Number.isNaN(math) || Number.isNaN(ctps)) return error(`Scores must be whole numbers from 0 to ${SCORE_INPUT_MAX}.`);
+  const minutesRaw = $("#mock-minutes").value.trim();
+  const minutes = minutesRaw === "" ? null : Number(minutesRaw);
+  if (minutes !== null && !(Number.isInteger(minutes) && minutes >= 1 && minutes <= 300)) {
+    return error("Time used must be a whole number of minutes, from 1 to 300.");
+  }
 
-  state.mocks.push({ id: Date.now(), name: $("#mock-name").value.trim(), date, math, ctps });
+  state.mocks.push({ id: Date.now(), name: $("#mock-name").value.trim(), date, math, ctps, minutes });
   save();
   haptic("success");
   $("#mock-modal").hidden = true;
   render();
 });
 
+// ---------- Sheet forms: exam date, targets, notebook entries ----------
+
+let sheetSubmit = null; // returns an error message, or "" when the form saved
+
+function openSheet(title, fieldsHTML, onSubmit) {
+  $("#sheet-form").innerHTML = `
+    <h2>${esc(title)}</h2>
+    ${fieldsHTML}
+    <p class="form-error" id="sheet-error" role="alert"></p>
+    <button class="primary" type="submit">Save</button>
+    <button class="ghost" type="button" data-close-sheet>Cancel</button>`;
+  sheetSubmit = onSubmit;
+  $("#sheet-modal").hidden = false;
+}
+
+function closeSheet() {
+  $("#sheet-modal").hidden = true;
+  sheetSubmit = null;
+}
+
+$("#sheet-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const err = sheetSubmit ? sheetSubmit() : "";
+  if (err) {
+    $("#sheet-error").textContent = err;
+    haptic("error");
+    return;
+  }
+  save();
+  haptic("success");
+  closeSheet();
+  render();
+});
+
+$("#sheet-form").addEventListener("click", (e) => {
+  if (e.target.closest("[data-close-sheet]")) closeSheet();
+});
+
+// Tapping the dark area outside a form closes it.
+document.querySelectorAll(".modal").forEach((modal) => {
+  modal.addEventListener("click", (e) => { if (e.target === modal) modal.hidden = true; });
+});
+
+function openExamSheet() {
+  openSheet("When is your NUET?", `
+    <label class="field">Exam date
+      <input id="exam-date" type="date" min="${todayISO()}" value="${esc(state.examDate)}">
+    </label>
+    <p class="hint small">Check the official date in your NUET registration.</p>`,
+  () => {
+    const value = $("#exam-date").value;
+    if (!value) return "Please choose your exam date.";
+    state.examDate = value;
+    return "";
+  });
+}
+
+function openTargetsSheet() {
+  const t = state.targets || { math: "", ctps: "" };
+  openSheet("Target scores", `
+    <div class="field-row">
+      <label class="field">Math target
+        <input id="target-math" type="number" inputmode="numeric" min="0" max="${SCORE_INPUT_MAX}" value="${t.math}">
+      </label>
+      <label class="field">CTPS target
+        <input id="target-ctps" type="number" inputmode="numeric" min="0" max="${SCORE_INPUT_MAX}" value="${t.ctps}">
+      </label>
+    </div>
+    <p class="hint small">A state grant needs at least ${SECTION_MIN} in each section and ${GRANT_TOTAL} in total.</p>`,
+  () => {
+    const math = readScore($("#target-math"));
+    const ctps = readScore($("#target-ctps"));
+    if (math === null || ctps === null) return "Please enter both targets.";
+    if (Number.isNaN(math) || Number.isNaN(ctps)) return `Targets must be whole numbers from 0 to ${SCORE_INPUT_MAX}.`;
+    state.targets = { math, ctps };
+    return "";
+  });
+}
+
+function openMistakeSheet() {
+  const preset = notebookFilter === "ctps" || (notebookFilter !== "math" && state.profile.focus === "ctps") ? "ctps" : "math";
+  const options = SECTIONS.map((s) =>
+    `<option value="${s.id}"${s.id === preset ? " selected" : ""}>${esc(s.title)}</option>`).join("");
+  openSheet("Add a mistake", `
+    <label class="field">Section
+      <select id="mistake-section">${options}</select>
+    </label>
+    <label class="field">The question, or what went wrong
+      <textarea id="mistake-question" rows="3" maxlength="600" placeholder="For example, mixed up the formula for the area of a trapezoid"></textarea>
+    </label>
+    <label class="field">What to remember <span class="hint">(optional)</span>
+      <textarea id="mistake-note" rows="3" maxlength="600" placeholder="The right method, or a tip for next time"></textarea>
+    </label>
+    <label class="field">Where it came from <span class="hint">(optional)</span>
+      <input id="mistake-source" maxlength="40" placeholder="For example, Mock test 2">
+    </label>`,
+  () => {
+    const question = $("#mistake-question").value.trim();
+    if (!question) return "Please describe the mistake.";
+    state.mistakes.unshift({
+      id: Date.now(),
+      section: $("#mistake-section").value,
+      question,
+      note: $("#mistake-note").value.trim(),
+      source: $("#mistake-source").value.trim(),
+      date: todayISO(),
+      mastered: false,
+    });
+    return "";
+  });
+}
+
+// A wrong practice answer goes into the notebook; answering the same question wrong
+// again reopens the existing entry instead of adding a duplicate.
+function addQuizMistake(section, material, qi, chosen) {
+  const q = material.questions[qi];
+  const ref = `${materialKey(section, route.index)}:${qi}`;
+  const entry = {
+    section: section.id,
+    source: material.title,
+    question: q.q,
+    yourAnswer: q.options[chosen],
+    correctAnswer: q.options[q.answer],
+    note: q.explain || "",
+    date: todayISO(),
+    mastered: false,
+    quizRef: ref,
+  };
+  const existing = state.mistakes.find((m) => m.quizRef === ref);
+  if (existing) Object.assign(existing, entry);
+  else state.mistakes.unshift({ id: Date.now(), ...entry });
+}
+
 // ---------- Practice quizzes ----------
 
 let quizAnswers = {}; // question index -> chosen option index, for the open quiz
+let quizTimes = {};   // question index -> seconds spent before answering it
+let quizClock = 0;    // when the quiz opened, or when the last question was answered
+
+function resetQuiz() {
+  quizAnswers = {};
+  quizTimes = {};
+  quizClock = Date.now();
+}
 
 function quizHTML(m) {
   const questions = m.questions || [];
@@ -614,7 +962,7 @@ $("#view").addEventListener("click", (e) => {
   if (t.dataset.openSection) return go({ view: "section", sectionId: t.dataset.openSection });
 
   if (t.dataset.openMaterial !== undefined) {
-    quizAnswers = {};
+    resetQuiz();
     haptic("light");
     return go({ view: "material", sectionId: route.sectionId, index: Number(t.dataset.openMaterial) });
   }
@@ -629,6 +977,48 @@ $("#view").addEventListener("click", (e) => {
   if (t.dataset.editProfile !== undefined) return showOnboarding();
 
   if (t.dataset.addMock !== undefined) return openMockForm();
+
+  if (t.dataset.sheet === "exam") return openExamSheet();
+  if (t.dataset.sheet === "targets") return openTargetsSheet();
+  if (t.dataset.sheet === "mistake") return openMistakeSheet();
+
+  if (t.dataset.openNotebook !== undefined) {
+    notebookFilter = "open";
+    return go({ view: "notebook" });
+  }
+
+  if (t.dataset.filter) {
+    notebookFilter = t.dataset.filter;
+    haptic("select");
+    return render();
+  }
+
+  if (t.dataset.master) {
+    const entry = state.mistakes.find((m) => m.id === Number(t.dataset.master));
+    entry.mastered = !entry.mastered;
+    save();
+    haptic(entry.mastered ? "success" : "light");
+    const y = window.scrollY;
+    render();
+    window.scrollTo(0, y);
+    return;
+  }
+
+  // Deleting a notebook entry needs a second tap within 3 seconds.
+  if (t.dataset.deleteMistake) {
+    if (!t.classList.contains("armed")) {
+      t.classList.add("armed");
+      haptic("rigid");
+      setTimeout(() => t.classList.remove("armed"), 3000);
+      return;
+    }
+    state.mistakes = state.mistakes.filter((m) => m.id !== Number(t.dataset.deleteMistake));
+    save();
+    const y = window.scrollY;
+    render();
+    window.scrollTo(0, y);
+    return;
+  }
 
   // Deleting a mock result needs a second tap within 3 seconds.
   if (t.dataset.deleteMock) {
@@ -679,14 +1069,22 @@ $("#view").addEventListener("click", (e) => {
     const qi = Number(t.dataset.q);
     const oi = Number(t.dataset.o);
     quizAnswers[qi] = oi;
-    haptic(oi === m.questions[qi].answer ? "success" : "error");
-    // Finishing every question counts the quiz as done and records the score.
+    const now = Date.now();
+    quizTimes[qi] = Math.min((now - quizClock) / 1000, QUESTION_TIME_CAP);
+    quizClock = now;
+
+    const right = oi === m.questions[qi].answer;
+    haptic(right ? "success" : "error");
+    if (!right) addQuizMistake(s, m, qi, oi);
+
+    // Finishing every question counts the quiz as done and records the score and time.
     if (Object.keys(quizAnswers).length === m.questions.length) {
       const correct = m.questions.filter((q, i) => quizAnswers[i] === q.answer).length;
-      state.attempts.push({ key: materialKey(s, route.index), section: s.id, correct, total: m.questions.length, at: Date.now() });
+      const seconds = Math.round(Object.values(quizTimes).reduce((sum, v) => sum + v, 0));
+      state.attempts.push({ key: materialKey(s, route.index), section: s.id, correct, total: m.questions.length, seconds, at: now });
       done.add(materialKey(s, route.index));
-      save();
     }
+    save();
     const y = window.scrollY;
     render();
     window.scrollTo(0, y);
@@ -694,7 +1092,7 @@ $("#view").addEventListener("click", (e) => {
   }
 
   if (t.dataset.retry !== undefined) {
-    quizAnswers = {};
+    resetQuiz();
     render();
   }
 });
@@ -775,7 +1173,7 @@ function renderWizard(direction) {
     setTelegramBack(false);
   } else {
     const intro = stepIndex === 0
-      ? `<div class="welcome"><span class="logo-mark big">N</span><p class="logo">NUET<span class="logo-ext">.exe</span></p></div>` : "";
+      ? `<div class="welcome"><span class="logo-mark big">N</span><p class="logo"><span class="logo-name">NUET<span class="logo-ext">.exe</span></span></p></div>` : "";
     body.innerHTML = intro + stepHTML(STEPS[stepIndex]);
     $("#wiz-progress").style.width = `${((stepIndex + 1) / STEPS.length) * 100}%`;
     $("#wiz-count").textContent = `${stepIndex + 1}/${STEPS.length}`;

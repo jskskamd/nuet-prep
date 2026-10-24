@@ -7,7 +7,7 @@
   <title>NUET.exe</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <!-- Bump ?v= on every release so Telegram doesn't keep serving old files. -->
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 
@@ -28,6 +28,9 @@
       <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17.2v.1"/></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
       <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+      <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></symbol>
+      <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/></symbol>
+      <symbol id="i-notebook" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 3v18M12.5 8H16M12.5 12H16"/></symbol>
     </defs>
   </svg>
 
@@ -52,7 +55,7 @@
   <div id="app" hidden>
     <header class="topbar">
       <button class="icon-btn" id="btn-back" aria-label="Back" hidden><svg class="icon"><use href="#i-back"/></svg></button>
-      <span class="logo"><span class="logo-mark">N</span>NUET<span class="logo-ext">.exe</span></span>
+      <span class="logo"><span class="logo-mark">N</span><span class="logo-name">NUET<span class="logo-ext">.exe</span></span></span>
     </header>
 
     <main id="view"></main>
@@ -83,14 +86,22 @@
           <input id="mock-ctps" type="number" inputmode="numeric" min="0" max="200" placeholder="0">
         </label>
       </div>
-      <p class="hint small" id="mock-total">Total: вЂ“</p>
+      <label class="field">Time used, in minutes <span class="hint">(optional)</span>
+        <input id="mock-minutes" type="number" inputmode="numeric" min="1" max="300" placeholder="For example, 110">
+      </label>
+      <p class="hint small" id="mock-total">Total: –</p>
       <p class="form-error" id="mock-error" role="alert"></p>
       <button class="primary" type="submit">Save result</button>
       <button class="ghost" type="button" id="mock-cancel">Cancel</button>
     </form>
   </div>
 
-  <script src="content.js?v=4"></script>
-  <script src="app.js?v=4"></script>
+  <!-- Small forms (exam date, targets, notebook entries) are built into this sheet by app.js -->
+  <div class="modal" id="sheet-modal" hidden>
+    <form class="sheet" id="sheet-form" novalidate></form>
+  </div>
+
+  <script src="content.js?v=5"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

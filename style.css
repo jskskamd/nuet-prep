@@ -61,7 +61,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
   border-bottom: 1px solid rgba(27, 42, 74, 0.6);
 }
 .logo { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 1.1em; letter-spacing: 0.01em; }
-.logo-ext { font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; font-weight: 700; color: var(--accent-2); }
+.logo-name { white-space: nowrap; }
+.logo-ext { margin-left: 1px; font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; font-weight: 700; color: var(--accent-2); }
 .welcome .logo { margin: 0; font-size: 1.2em; }
 .logo-mark {
   width: 28px;
@@ -499,6 +500,125 @@ main { max-width: 560px; margin: 0 auto; padding: 18px 16px 24px; }
 .row-delete .icon { width: 16px; height: 16px; }
 .row-delete.armed { background: rgba(255, 95, 109, 0.15); color: var(--bad); }
 .stat-panel .primary, .stat-panel .secondary { margin-top: 12px; }
+
+/* ---------- Home cards ---------- */
+
+.home-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  text-align: left;
+}
+.home-card:active, .countdown:active { transform: scale(0.98); }
+.count {
+  min-width: 26px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.85em;
+  font-weight: 700;
+  text-align: center;
+}
+
+.countdown {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  margin: -8px 0 12px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(59, 123, 255, 0.45);
+  background: linear-gradient(135deg, rgba(59, 123, 255, 0.18), rgba(11, 20, 38, 0.9));
+  text-align: left;
+}
+.countdown-num { font-size: 3em; font-weight: 800; line-height: 1; min-width: 1.4em; text-align: center; }
+.countdown-text { display: flex; flex-direction: column; gap: 3px; }
+
+.home-panel {
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+.panel-head { display: flex; align-items: center; justify-content: space-between; }
+.panel-head .list-title { display: flex; align-items: center; gap: 6px; margin: 0; }
+.icon.tiny { width: 15px; height: 15px; }
+.link-btn { border: none; background: none; padding: 4px 0; color: var(--accent-2); font-weight: 600; }
+.target-row { display: flex; flex-direction: column; gap: 5px; margin: 12px 0; }
+.target-head { display: flex; justify-content: space-between; font-weight: 600; }
+.target-head b { color: var(--accent-2); }
+.home-panel .status { margin-top: 4px; }
+
+/* ---------- Mistake notebook ---------- */
+
+.filters { display: flex; gap: 8px; overflow-x: auto; margin: 16px 0 12px; padding-bottom: 2px; }
+.filter {
+  flex-shrink: 0;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--hint);
+  font-size: 0.9em;
+  font-weight: 600;
+}
+.filter.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.mistake-list { display: flex; flex-direction: column; gap: 10px; }
+.mistake {
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+.mistake.mastered { opacity: 0.7; }
+.mistake-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.tag {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  font-size: 0.75em;
+  font-weight: 700;
+}
+.mistake-q { margin: 0 0 8px; white-space: pre-line; }
+.answer-line { margin: 0 0 4px; font-size: 0.92em; }
+.answer-line .hint { display: inline-block; min-width: 92px; font-weight: 600; }
+.mistake-note {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  font-size: 0.92em;
+  white-space: pre-line;
+}
+.mistake-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.small-btn { width: auto; margin: 0; padding: 8px 14px; font-size: 0.9em; }
+.small-btn .icon { width: 16px; height: 16px; }
+.field select, .field textarea {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 400;
+}
+.field textarea { resize: vertical; }
+.field select:focus, .field textarea:focus { outline: 2px solid var(--accent); border-color: transparent; }
 
 /* ---------- Mock result form ---------- */
 
