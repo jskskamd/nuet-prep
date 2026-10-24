@@ -30,7 +30,9 @@ const TYPE_INFO = {
   lesson: { label: "Lesson", icon: "i-book" },
   link: { label: "Resource", icon: "i-link" },
   quiz: { label: "Practice", icon: "i-quiz" },
+  test: { label: "Timed test", icon: "i-clock" },
 };
+const letter = (i) => String.fromCharCode(65 + i); // 0 -> "A"
 
 // Sign-up questions, in order. `label` is how the answer shows on the Profile tab.
 const STEPS = [
@@ -127,6 +129,7 @@ function sectionProgress(section) {
 function materialMeta(m) {
   const type = TYPE_INFO[m.type] || TYPE_INFO.lesson;
   if (m.type === "quiz") return `${type.label} · ${(m.questions || []).length} questions`;
+  if (m.type === "test") return `${type.label} · ${m.questions.length} questions · ${m.minutes} min`;
   if (m.type === "link") return m.note ? `${type.label} · ${m.note}` : type.label;
   return m.minutes ? `${type.label} · ${m.minutes} min` : type.label;
 }
@@ -310,6 +313,7 @@ function notebookHTML() {
           <span class="hint small">${esc(m.source || "My note")} · ${esc(shortDate(m.date))}</span>
         </div>
         <p class="mistake-q">${esc(m.question)}</p>
+        ${m.image ? `<figure class="q-figure" data-zoom><img class="q-img" src="${esc(m.image)}" alt="${esc(m.question)}" loading="lazy"></figure>` : ""}
         ${m.yourAnswer ? `<p class="answer-line"><span class="hint">Your answer</span> ${esc(m.yourAnswer)}</p>` : ""}
         ${m.correctAnswer ? `<p class="answer-line"><span class="hint">Correct</span> ${esc(m.correctAnswer)}</p>` : ""}
         ${m.note ? `<p class="mistake-note">${esc(m.note)}</p>` : ""}
@@ -378,6 +382,7 @@ function sectionHTML(s) {
 
 function materialHTML(s, index) {
   const m = s.materials[index];
+  if (m.type === "test") return testHTML(s, index, m);
   const finished = done.has(materialKey(s, index));
   const head = `
     <p class="eyebrow">${esc(s.short)} · ${esc(materialMeta(m))}</p>
@@ -396,6 +401,273 @@ function materialHTML(s, index) {
   return `${head}
     <article class="lesson">${paragraphs.map((p) => `<p>${esc(p)}</p>`).join("")}</article>
     ${doneButton(finished)}`;
+}
+
+// ---------- Timed tests ----------
+// A run lives in memory while the app is open, so leaving a test and coming back resumes it
+// with the clock still running. Finished runs are saved to state.attempts.
+
+const testRuns = {}; // material key -> { key, sectionId, index, deadline, answers, current, finished, ... }
+let testTicker = null;
+
+function remainingSeconds(run) {
+  return Math.max(0, Math.round((run.deadline - Date.now()) / 1000));
+}
+
+function timestampDate(ms) {
+  return new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+function startTest(s, index) {
+  const m = s.materials[index];
+  const key = materialKey(s, index);
+  const now = Date.now();
+  testRuns[key] = {
+    key, sectionId: s.id, index,
+    startedAt: now, deadline: now + m.minutes * 60000,
+    answers: {}, current: 0, finished: false, review: null,
+  };
+  if (!testTicker) testTicker = setInterval(tickTests, 1000);
+}
+
+function tickTests() {
+  const active = Object.values(testRuns).filter((r) => !r.finished);
+  if (!active.length) {
+    clearInterval(testTicker);
+    testTicker = null;
+    return;
+  }
+  active.forEach((run) => { if (remainingSeconds(run) === 0) finishTest(run, true); });
+  const timer = $("#test-timer");
+  const shown = currentTestRun();
+  if (timer && shown && !shown.finished) {
+    const left = remainingSeconds(shown);
+    timer.textContent = formatSeconds(left);
+    timer.classList.toggle("low", left <= 300);
+  }
+}
+
+function currentTestRun() {
+  if (route.view !== "material") return null;
+  return testRuns[materialKey(findSection(route.sectionId), route.index)] || null;
+}
+
+function finishTest(run, timeUp) {
+  const s = findSection(run.sectionId);
+  const m = s.materials[run.index];
+  const answered = Object.keys(run.answers).length;
+  run.finished = true;
+  run.timeUp = timeUp;
+  run.seconds = Math.min(Math.round((Date.now() - run.startedAt) / 1000), m.minutes * 60);
+  run.correct = m.questions.filter((q, i) => run.answers[i] === q.answer).length;
+  state.attempts.push({
+    key: run.key, section: s.id, kind: "test",
+    correct: run.correct, total: m.questions.length, answered, seconds: run.seconds, at: Date.now(),
+  });
+  m.questions.forEach((q, i) => {
+    if (run.answers[i] !== undefined && run.answers[i] !== q.answer) addTestMistake(s, m, run, i);
+  });
+  done.add(run.key);
+  save();
+  haptic(timeUp ? "error" : "success");
+  if (currentTestRun() === run) render();
+}
+
+function addTestMistake(s, m, run, i) {
+  const q = m.questions[i];
+  const ref = `${run.key}:${i}`;
+  const entry = {
+    section: s.id,
+    source: m.title,
+    question: `Question ${i + 1}`,
+    image: q.image,
+    yourAnswer: letter(run.answers[i]),
+    correctAnswer: letter(q.answer),
+    note: "",
+    date: todayISO(),
+    mastered: false,
+    quizRef: ref,
+  };
+  const existing = state.mistakes.find((x) => x.quizRef === ref);
+  if (existing) Object.assign(existing, entry);
+  else state.mistakes.unshift({ id: Date.now() + i, ...entry });
+}
+
+function testHTML(s, index, m) {
+  const run = testRuns[materialKey(s, index)];
+  if (!run) return testIntroHTML(s, index, m);
+  if (run.finished) return testResultHTML(s, m, run);
+  return testQuestionHTML(m, run);
+}
+
+function testIntroHTML(s, index, m) {
+  const past = state.attempts.filter((a) => a.key === materialKey(s, index));
+  const best = past.length ? Math.max(...past.map((a) => a.correct)) : null;
+  const last = past[past.length - 1];
+  return `
+    <p class="eyebrow">${esc(s.short)} · Timed test</p>
+    <h1 class="material-title">${esc(m.title)}</h1>
+    <div class="tiles">
+      <div class="tile"><span class="hint">Questions</span><b>${m.questions.length}</b></div>
+      <div class="tile"><span class="hint">Time</span><b>${m.minutes} min</b></div>
+      <div class="tile"><span class="hint">Best score</span><b>${best === null ? "–" : `${best}/${m.questions.length}`}</b></div>
+    </div>
+    <ul class="rules">
+      <li>One question at a time. You can skip questions and come back to them.</li>
+      <li>The test is submitted automatically when the time runs out.</li>
+      <li>Wrong answers are added to your mistake notebook.</li>
+    </ul>
+    ${last ? `<p class="hint small">Last attempt: ${last.correct}/${last.total} on ${esc(timestampDate(last.at))}</p>` : ""}
+    <button class="primary" data-start-test>Start test</button>
+    <p class="hint small source">Source: ${esc(m.source)}</p>`;
+}
+
+function questionFigure(q, alt) {
+  return `<figure class="q-figure" data-zoom><img class="q-img" src="${esc(q.image)}" alt="${esc(alt)}"></figure>`;
+}
+
+function testQuestionHTML(m, run) {
+  const qi = run.current;
+  const q = m.questions[qi];
+  const chosen = run.answers[qi];
+  const answered = Object.keys(run.answers).length;
+  const left = remainingSeconds(run);
+  const next = m.questions[qi + 1];
+  if (next) new Image().src = next.image; // preload
+
+  const answers = Array.from({ length: q.options }, (_, i) =>
+    `<button class="answer${chosen === i ? " on" : ""}" data-answer="${i}">${letter(i)}</button>`).join("");
+  const map = m.questions.map((_, i) =>
+    `<button class="map-cell${i === qi ? " current" : ""}${run.answers[i] !== undefined ? " answered" : ""}" data-goto="${i}">${i + 1}</button>`
+  ).join("");
+  const unanswered = m.questions.length - answered;
+
+  return `
+    <div class="test-bar">
+      <span>Question <b>${qi + 1}</b> of ${m.questions.length}</span>
+      <span class="test-timer${left <= 300 ? " low" : ""}" id="test-timer">${formatSeconds(left)}</span>
+    </div>
+    ${questionFigure(q, `Question ${qi + 1}`)}
+    <p class="hint small center">Tap the question to zoom in</p>
+    <div class="answer-grid">${answers}</div>
+    <div class="test-nav">
+      <button class="secondary" data-test-step="-1" ${qi === 0 ? "disabled" : ""}>${icon("i-back")} Previous</button>
+      <button class="secondary" data-test-step="1" ${qi === m.questions.length - 1 ? "disabled" : ""}>Next ${icon("i-next")}</button>
+    </div>
+    <h2 class="list-title">Questions · ${answered}/${m.questions.length} answered</h2>
+    <div class="q-map">${map}</div>
+    <button class="primary" data-finish-test data-unanswered="${unanswered}">Finish test</button>`;
+}
+
+function testResultHTML(s, m, run) {
+  const total = m.questions.length;
+  const answered = Object.keys(run.answers).length;
+  const rows = m.questions.map((q, i) => {
+    const a = run.answers[i];
+    const status = a === undefined ? "skipped" : a === q.answer ? "right" : "wrong";
+    const text = a === undefined ? `Not answered · correct ${letter(q.answer)}`
+      : status === "right" ? `Your answer ${letter(a)}` : `Your answer ${letter(a)} · correct ${letter(q.answer)}`;
+    const detail = run.review === i ? `
+      <div class="review-detail">
+        ${questionFigure(q, `Question ${i + 1}`)}
+        <p class="status good">${icon("i-check")}<span>Correct answer: ${letter(q.answer)}</span></p>
+      </div>` : "";
+    return `
+      <button class="review-row ${status}" data-review="${i}">
+        <span class="review-num">${i + 1}</span>
+        <span class="review-text">${text}</span>
+        ${icon(status === "right" ? "i-check" : status === "wrong" ? "i-x" : "i-alert")}
+      </button>${detail}`;
+  }).join("");
+
+  return `
+    <p class="eyebrow">${esc(s.short)} · Results</p>
+    <h1 class="material-title">${esc(m.title)}</h1>
+    ${run.timeUp ? `<p class="status warn">${icon("i-clock")}<span>Time ran out, so the test was submitted automatically.</span></p>` : ""}
+    <div class="score">
+      <strong>${run.correct} / ${total}</strong>
+      <span class="hint">${Math.round((run.correct / total) * 100)}% correct</span>
+    </div>
+    <div class="tiles">
+      <div class="tile"><span class="hint">Answered</span><b>${answered}/${total}</b></div>
+      <div class="tile"><span class="hint">Time used</span><b>${formatSeconds(run.seconds)}</b></div>
+      <div class="tile"><span class="hint">Per question</span><b>${answered ? formatSeconds(run.seconds / answered) : "–"}</b></div>
+    </div>
+    <h2 class="list-title">Review · tap a question to see it</h2>
+    <div class="review-list">${rows}</div>
+    <button class="primary" data-retake-test>Retake test</button>
+    <button class="secondary" data-close-test>Done</button>`;
+}
+
+// Returns true when the click belonged to a timed test.
+function handleTestClick(t) {
+  if (route.view !== "material") return false;
+  const s = findSection(route.sectionId);
+  const m = s.materials[route.index];
+  if (m.type !== "test") return false;
+  const key = materialKey(s, route.index);
+  const run = testRuns[key];
+  const ds = t.dataset;
+
+  if (ds.startTest !== undefined || ds.retakeTest !== undefined) {
+    startTest(s, route.index);
+    haptic("light");
+    render();
+    return true;
+  }
+  if (ds.closeTest !== undefined) {
+    delete testRuns[key];
+    render();
+    return true;
+  }
+  if (!run) return false;
+
+  if (ds.review !== undefined) {
+    const i = Number(ds.review);
+    run.review = run.review === i ? null : i;
+    const y = window.scrollY;
+    render();
+    window.scrollTo(0, y);
+    return true;
+  }
+  if (run.finished) return false;
+
+  const show = (i) => {
+    run.current = Math.max(0, Math.min(m.questions.length - 1, i));
+    render();
+  };
+  if (ds.answer !== undefined) {
+    const from = run.current;
+    run.answers[from] = Number(ds.answer);
+    haptic("select");
+    render();
+    // Move on after a moment, unless the student already moved somewhere else.
+    if (from < m.questions.length - 1) {
+      setTimeout(() => { if (!run.finished && run.current === from && currentTestRun() === run) show(from + 1); }, 350);
+    }
+    return true;
+  }
+  if (ds.testStep !== undefined) { show(run.current + Number(ds.testStep)); return true; }
+  if (ds.goto !== undefined) { show(Number(ds.goto)); return true; }
+
+  // Finishing with unanswered questions needs a second tap within 3 seconds.
+  if (ds.finishTest !== undefined) {
+    const unanswered = Number(ds.unanswered);
+    if (unanswered > 0 && !t.classList.contains("armed")) {
+      t.classList.add("armed");
+      t.textContent = `${unanswered} unanswered. Tap again to finish`;
+      haptic("rigid");
+      setTimeout(() => {
+        if (!t.isConnected) return;
+        t.classList.remove("armed");
+        t.textContent = "Finish test";
+      }, 3000);
+      return true;
+    }
+    finishTest(run, false);
+    return true;
+  }
+  return false;
 }
 
 function doneButton(finished) {
@@ -522,8 +794,8 @@ function practiceStatsHTML() {
   if (!attempts.length) {
     return `
       <section class="panel stat-panel">
-        <h2 class="list-title">Practice quizzes</h2>
-        <p class="hint">Finish a practice quiz in Math or CTPS and your scores will show up here.</p>
+        <h2 class="list-title">Practice tests</h2>
+        <p class="hint">Finish a test or quiz in Math or CTPS and your scores will show up here.</p>
       </section>`;
   }
   const avg = (list) => Math.round(list.reduce((s, a) => s + pct(a), 0) / list.length);
@@ -532,15 +804,15 @@ function practiceStatsHTML() {
     return `
       <div class="info-row">
         <span class="hint">${esc(s.short)}</span>
-        <strong>${list.length ? `${avg(list)}% average · ${list.length} ${list.length === 1 ? "quiz" : "quizzes"}` : "No quizzes yet"}</strong>
+        <strong>${list.length ? `${avg(list)}% average · ${list.length} done` : "Nothing yet"}</strong>
       </div>`;
   }).join("");
 
   return `
     <section class="panel stat-panel">
-      <h2 class="list-title">Practice quizzes</h2>
+      <h2 class="list-title">Practice tests</h2>
       <div class="tiles">
-        <div class="tile"><span class="hint">Quizzes finished</span><b>${attempts.length}</b></div>
+        <div class="tile"><span class="hint">Finished</span><b>${attempts.length}</b></div>
         <div class="tile"><span class="hint">Average score</span><b>${avg(attempts)}%</b></div>
         <div class="tile"><span class="hint">Best score</span><b>${Math.max(...attempts.map(pct))}%</b></div>
       </div>
@@ -550,9 +822,11 @@ function practiceStatsHTML() {
 
 function timeStatsHTML() {
   const pace = (NUET_MINUTES * 60) / NUET_QUESTIONS;
-  const timed = state.attempts.filter((a) => a.seconds);
+  // Timed tests can be submitted with questions skipped, so divide by the questions answered.
+  const answeredIn = (a) => (a.answered === undefined ? a.total : a.answered);
+  const timed = state.attempts.filter((a) => a.seconds && answeredIn(a));
   const practice = timed.length
-    ? timed.reduce((s, a) => s + a.seconds, 0) / timed.reduce((s, a) => s + a.total, 0) : null;
+    ? timed.reduce((s, a) => s + a.seconds, 0) / timed.reduce((s, a) => s + answeredIn(a), 0) : null;
   // A full mock is 60 questions, so minutes used / 60 is the time per question.
   const mocksTimed = state.mocks.filter((r) => r.minutes);
   const mock = mocksTimed.length
@@ -908,10 +1182,21 @@ function quizHTML(m) {
 let deleteTimer = null;
 
 $("#view").addEventListener("click", (e) => {
+  // Tapping a question image toggles between fit-to-screen and full size (scrollable).
+  const figure = e.target.closest("[data-zoom]");
+  if (figure) {
+    const img = figure.querySelector("img");
+    const zoomed = figure.classList.toggle("zoomed");
+    img.style.width = zoomed ? `${Math.round(img.naturalWidth / 1.6)}px` : "";
+    return;
+  }
+
   const t = e.target.closest("button");
   if (!t) return;
 
   if (t.dataset.openSection) return go({ view: "section", sectionId: t.dataset.openSection });
+
+  if (handleTestClick(t)) return;
 
   if (t.dataset.openMaterial !== undefined) {
     resetQuiz();

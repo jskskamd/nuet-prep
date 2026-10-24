@@ -59,6 +59,21 @@ reorder items later, so students' "done" progress stays attached to the right it
 },
 ```
 
+## Timed tests from past papers
+
+The Math section's timed tests come from the NSAA past papers in `../materials/math`
+(Section 1, **Part A Mathematics only**, questions 1-18). Each question is cropped from the
+PDF as an image into `tests/<paper>/`, and the answers come from the paper's answer key.
+The generated list is `tests.js`; don't edit it by hand.
+
+To rebuild after changing papers (needs Python with `pymupdf` and `pillow`):
+
+```
+python tools/build_tests.py ../materials/math .
+```
+
+To add another paper, add a line to `PAPERS` in `tools/build_tests.py`.
+
 ## Publishing changes
 
 After editing, bump the `?v=` number on the `<link>` and `<script>` tags in `index.html`

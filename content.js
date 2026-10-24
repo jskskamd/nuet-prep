@@ -7,7 +7,10 @@ const SECTIONS = [
     short: "Math",
     icon: "i-math",
     description: "Lessons and practice problems for the Mathematics section.",
-    materials: [],
+    // Timed tests built from the NSAA past papers (tests.js), then anything added by hand below.
+    materials: [
+      ...MATH_TESTS,
+    ],
   },
   {
     id: "ctps",
