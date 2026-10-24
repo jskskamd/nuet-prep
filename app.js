@@ -59,23 +59,15 @@ const tgUser = tg && tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
 // ---------- State (saved in this device's browser storage) ----------
 
 // mocks: mock test results the student typed in; attempts: finished in-app practice quizzes;
-// targets: { math, ctps } goal scores; examDate: "YYYY-MM-DD"; mistakes: the mistake notebook.
+// targets: { math, ctps } goal scores; mistakes: the mistake notebook.
 function freshState() {
-  return { profile: null, done: [], mocks: [], attempts: [], targets: null, examDate: "", mistakes: [] };
+  return { profile: null, done: [], mocks: [], attempts: [], targets: null, mistakes: [] };
 }
 
 function todayISO() {
   const now = new Date(); // local date, not UTC
   return [now.getFullYear(), now.getMonth() + 1, now.getDate()]
     .map((n) => String(n).padStart(2, "0")).join("-");
-}
-
-function daysUntil(iso) {
-  return Math.round((new Date(`${iso}T00:00:00`) - new Date(`${todayISO()}T00:00:00`)) / 86400000);
-}
-
-function longDate(iso) {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 }
 
 // 84 -> "1:24"
@@ -224,7 +216,6 @@ function homeHTML() {
       <h1>Get ready for the NUET</h1>
       <p class="hint">Study materials and practice for both test sections, all in Telegram.</p>
     </section>
-    ${countdownHTML()}
     ${targetsHTML()}
     ${notebookCardHTML()}
     <h2 class="list-title">Sections</h2>
@@ -232,34 +223,7 @@ function homeHTML() {
     <p class="note">New materials are added regularly. Check back soon.</p>`;
 }
 
-// ---------- Home cards: countdown, targets, mistake notebook ----------
-
-function countdownHTML() {
-  if (!state.examDate) {
-    return `
-      <button class="home-card" data-sheet="exam">
-        <span class="section-icon">${icon("i-calendar")}</span>
-        <span class="section-text">
-          <strong>When is your NUET?</strong>
-          <span class="hint">Set your exam date to start the countdown.</span>
-        </span>
-        ${icon("i-next", "icon chevron")}
-      </button>`;
-  }
-  const days = daysUntil(state.examDate);
-  let number = String(days);
-  let label = `${days === 1 ? "day" : "days"} left until the NUET`;
-  if (days === 0) { number = "0"; label = "Exam day. Good luck!"; }
-  if (days < 0) { number = "–"; label = "Your exam date has passed"; }
-  return `
-    <button class="countdown" data-sheet="exam">
-      <span class="countdown-num">${number}</span>
-      <span class="countdown-text">
-        <strong>${label}</strong>
-        <span class="hint small">${esc(longDate(state.examDate))} · tap to change</span>
-      </span>
-    </button>`;
-}
+// ---------- Home cards: targets, mistake notebook ----------
 
 function latestMock() {
   const mocks = sortedMocks();
@@ -811,20 +775,6 @@ document.querySelectorAll(".modal").forEach((modal) => {
   modal.addEventListener("click", (e) => { if (e.target === modal) modal.hidden = true; });
 });
 
-function openExamSheet() {
-  openSheet("When is your NUET?", `
-    <label class="field">Exam date
-      <input id="exam-date" type="date" min="${todayISO()}" value="${esc(state.examDate)}">
-    </label>
-    <p class="hint small">Check the official date in your NUET registration.</p>`,
-  () => {
-    const value = $("#exam-date").value;
-    if (!value) return "Please choose your exam date.";
-    state.examDate = value;
-    return "";
-  });
-}
-
 function openTargetsSheet() {
   const t = state.targets || { math: "", ctps: "" };
   openSheet("Target scores", `
@@ -980,7 +930,6 @@ $("#view").addEventListener("click", (e) => {
 
   if (t.dataset.addMock !== undefined) return openMockForm();
 
-  if (t.dataset.sheet === "exam") return openExamSheet();
   if (t.dataset.sheet === "targets") return openTargetsSheet();
   if (t.dataset.sheet === "mistake") return openMistakeSheet();
 
