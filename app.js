@@ -14,36 +14,70 @@ if (tg) {
   } catch (e) {}
 }
 
-const STORE_KEY = "nuetprep:v1";
+const STORE_KEY = "nuetprep:v2";
+const OLD_STORE_KEY = "nuetprep:v1"; // progress only, from before sign-up existed
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const TYPE_INFO = {
   lesson: { label: "Lesson", icon: "i-book" },
   link: { label: "Resource", icon: "i-link" },
   quiz: { label: "Practice", icon: "i-quiz" },
 };
 
+// Sign-up questions, in order. `label` is how the answer shows on the Profile tab.
+const STEPS = [
+  { id: "name", type: "text", label: "Name", title: "What's your name?",
+    hint: "So we know what to call you.", placeholder: "Your full name" },
+  { id: "email", type: "email", label: "Email", title: "What's your email?",
+    hint: "This is your account email. For now it's saved only on this device.", placeholder: "you@example.com" },
+  { id: "grade", type: "choice", label: "Grade", title: "Which grade are you in?",
+    options: [["10", "Grade 10"], ["11", "Grade 11"], ["12", "Grade 12"], ["graduated", "Already graduated"]] },
+  { id: "mock", type: "choice", label: "Mock tests", title: "Have you ever done an NUET mock test?",
+    options: [["several", "Yes, several times"], ["once", "Yes, once"], ["never", "No, not yet"]] },
+  { id: "testDate", type: "choice", label: "Taking the NUET", title: "When do you plan to take the NUET?",
+    options: [["1m", "Within a month"], ["3m", "In 1–3 months"], ["6m", "In 3–6 months"], ["unsure", "Not sure yet"]] },
+  { id: "focus", type: "choice", label: "Focus", title: "Which section do you want to focus on?",
+    options: [["math", "Mathematics"], ["ctps", "Critical Thinking & Problem Solving"], ["both", "Both equally"]] },
+];
+
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const icon = (id, cls = "icon") => `<svg class="${cls}"><use href="#${id}"/></svg>`;
+const tgUser = tg && tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
 
-// ---------- Progress (saved in this device's browser storage) ----------
+// ---------- State (saved in this device's browser storage) ----------
 
-function loadDone() {
-  try { return new Set(JSON.parse(localStorage.getItem(STORE_KEY) || "[]")); } catch (e) { return new Set(); }
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) return JSON.parse(raw);
+    const oldDone = JSON.parse(localStorage.getItem(OLD_STORE_KEY) || "[]");
+    return { profile: null, done: oldDone };
+  } catch (e) {
+    return { profile: null, done: [] };
+  }
 }
 
-const done = loadDone();
+let state = loadState();
+let done = new Set(state.done);
 
-function saveDone() {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify([...done])); } catch (e) {}
+function save() {
+  state.done = [...done];
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
 }
 
 function haptic(kind) {
   try {
     if (!tg || !tg.HapticFeedback) return;
     if (kind === "success" || kind === "error") tg.HapticFeedback.notificationOccurred(kind);
+    else if (kind === "select") tg.HapticFeedback.selectionChanged();
     else tg.HapticFeedback.impactOccurred(kind);
   } catch (e) {}
+}
+
+function setTelegramBack(visible) {
+  if (!tg || !tg.BackButton) return;
+  try { visible ? tg.BackButton.show() : tg.BackButton.hide(); } catch (e) {}
 }
 
 function findSection(id) {
@@ -68,6 +102,16 @@ function materialMeta(m) {
   return m.minutes ? `${type.label} · ${m.minutes} min` : type.label;
 }
 
+function answerLabel(stepId, value) {
+  const step = STEPS.find((s) => s.id === stepId);
+  const option = step.options && step.options.find(([v]) => v === value);
+  return option ? option[1] : value || "Not set";
+}
+
+function initials(name) {
+  return name.trim().split(/\s+/).slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join("") || "?";
+}
+
 // ---------- Navigation ----------
 
 let route = { view: "home" };
@@ -86,8 +130,8 @@ function back() {
 
 function openTab(name) {
   stack = [];
-  route = name === "home" ? { view: "home" } : { view: "section", sectionId: name };
-  haptic("light");
+  route = name === "home" || name === "profile" ? { view: name } : { view: "section", sectionId: name };
+  haptic("select");
   render();
 }
 
@@ -95,35 +139,37 @@ function render() {
   const view = $("#view");
   if (route.view === "section") view.innerHTML = sectionHTML(findSection(route.sectionId));
   else if (route.view === "material") view.innerHTML = materialHTML(findSection(route.sectionId), route.index);
+  else if (route.view === "profile") view.innerHTML = profileHTML();
   else view.innerHTML = homeHTML();
 
-  const activeTab = route.view === "home" ? "home" : route.sectionId;
+  const activeTab = route.view === "home" || route.view === "profile" ? route.view : route.sectionId;
   document.querySelectorAll(".tabs button").forEach((b) => {
     if (b.dataset.tab === activeTab) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   });
 
-  const canGoBack = stack.length > 0;
-  $("#btn-back").hidden = !canGoBack;
-  if (tg && tg.BackButton) {
-    try { canGoBack ? tg.BackButton.show() : tg.BackButton.hide(); } catch (e) {}
-  }
+  $("#btn-back").hidden = stack.length === 0;
+  setTelegramBack(stack.length > 0);
   window.scrollTo(0, 0);
 }
 
 // ---------- Views ----------
 
 function homeHTML() {
+  const p = state.profile;
+  const firstName = p.name.trim().split(/\s+/)[0];
   const cards = SECTIONS.map((s) => {
-    const p = sectionProgress(s);
-    const status = p.total
-      ? `<div class="meter"><div class="meter-fill" style="width:${p.pct}%"></div></div>
-         <span class="hint small">${p.finished} of ${p.total} done</span>`
+    const prog = sectionProgress(s);
+    const status = prog.total
+      ? `<div class="meter"><div class="meter-fill" style="width:${prog.pct}%"></div></div>
+         <span class="hint small">${prog.finished} of ${prog.total} done</span>`
       : `<span class="badge">Coming soon</span>`;
+    const focus = p.focus === s.id ? `<span class="badge focus">Your focus</span>` : "";
     return `
-      <button class="section-card" data-open-section="${s.id}">
+      <button class="section-card${p.focus === s.id ? " focused" : ""}" data-open-section="${s.id}">
         <span class="section-icon">${icon(s.icon)}</span>
         <span class="section-text">
+          ${focus}
           <strong>${esc(s.title)}</strong>
           <span class="hint">${esc(s.description)}</span>
           ${status}
@@ -134,7 +180,7 @@ function homeHTML() {
 
   return `
     <section class="hero">
-      <p class="eyebrow">Nazarbayev University Entrance Test</p>
+      <p class="eyebrow">Hi, ${esc(firstName)}</p>
       <h1>Get ready for the NUET</h1>
       <p class="hint">Study materials and practice for both test sections, all in Telegram.</p>
     </section>
@@ -210,6 +256,39 @@ function doneButton(finished) {
     : `<button class="secondary" data-toggle-done>Mark as done</button>`;
 }
 
+function profileHTML() {
+  const p = state.profile;
+  const math = sectionProgress(findSection("math"));
+  const ctps = sectionProgress(findSection("ctps"));
+  const rows = STEPS.filter((s) => s.type === "choice").map((s) => `
+    <div class="info-row">
+      <span class="hint">${esc(s.label)}</span>
+      <strong>${esc(answerLabel(s.id, p[s.id]))}</strong>
+    </div>`).join("");
+
+  return `
+    <section class="profile-hero">
+      <span class="avatar">${esc(initials(p.name))}</span>
+      <h1>${esc(p.name)}</h1>
+      <p class="hint">${esc(p.email)}</p>
+      <button class="pill-btn" data-edit-profile>Edit profile</button>
+    </section>
+
+    <section class="stats">
+      <div><b>${math.finished + ctps.finished}</b><span>Completed</span></div>
+      <div><b>${math.finished}</b><span>Math</span></div>
+      <div><b>${ctps.finished}</b><span>CTPS</span></div>
+    </section>
+
+    <section class="panel">
+      <h2 class="list-title">About you</h2>
+      ${rows}
+    </section>
+
+    <p class="note">Your profile and progress are saved on this device.</p>
+    <button class="ghost danger" data-delete-account>Delete my account</button>`;
+}
+
 // ---------- Practice quizzes ----------
 
 let quizAnswers = {}; // question index -> chosen option index, for the open quiz
@@ -254,7 +333,9 @@ function quizHTML(m) {
   return list + score;
 }
 
-// ---------- Events ----------
+// ---------- App events ----------
+
+let deleteTimer = null;
 
 $("#view").addEventListener("click", (e) => {
   const t = e.target.closest("button");
@@ -275,13 +356,31 @@ $("#view").addEventListener("click", (e) => {
     return;
   }
 
+  if (t.dataset.editProfile !== undefined) return showOnboarding();
+
+  // Delete needs a second tap within 3 seconds.
+  if (t.dataset.deleteAccount !== undefined) {
+    if (!deleteTimer) {
+      t.textContent = "Tap again to delete your account";
+      haptic("rigid");
+      deleteTimer = setTimeout(() => { t.textContent = "Delete my account"; deleteTimer = null; }, 3000);
+      return;
+    }
+    clearTimeout(deleteTimer);
+    deleteTimer = null;
+    state = { profile: null, done: [] };
+    done = new Set();
+    save();
+    return showOnboarding();
+  }
+
   const s = findSection(route.sectionId);
 
   if (t.dataset.toggleDone !== undefined) {
     const key = materialKey(s, route.index);
     if (done.has(key)) done.delete(key);
     else { done.add(key); haptic("success"); }
-    saveDone();
+    save();
     return render();
   }
 
@@ -294,7 +393,7 @@ $("#view").addEventListener("click", (e) => {
     // Finishing every question counts the quiz as done.
     if (Object.keys(quizAnswers).length === m.questions.length) {
       done.add(materialKey(s, route.index));
-      saveDone();
+      save();
     }
     const y = window.scrollY;
     render();
@@ -314,8 +413,198 @@ document.querySelector(".tabs").addEventListener("click", (e) => {
 });
 
 $("#btn-back").addEventListener("click", back);
-if (tg && tg.BackButton) {
-  try { tg.BackButton.onClick(back); } catch (e) {}
+
+// ---------- Sign-up wizard ----------
+
+let draft = null;    // profile being created or edited
+let stepIndex = 0;
+let editing = false; // true: every question on one page; false: one question per screen
+let advanceTimer = null;
+
+function newDraft() {
+  if (state.profile) return { ...state.profile };
+  const tgName = tgUser ? [tgUser.first_name, tgUser.last_name].filter(Boolean).join(" ") : "";
+  const draft = { name: tgName };
+  STEPS.forEach((s) => { if (!(s.id in draft)) draft[s.id] = ""; });
+  return draft;
 }
 
-render();
+function stepError(step) {
+  const value = (draft[step.id] || "").trim();
+  if (step.type === "text") return value ? "" : "Please enter your name.";
+  if (step.type === "email") {
+    if (!value) return "Please enter your email.";
+    return EMAIL_RE.test(value) ? "" : "That email doesn't look right.";
+  }
+  return value ? "" : "Please choose one option.";
+}
+
+function stepHTML(step) {
+  let field;
+  if (step.type === "choice") {
+    field = `<div class="choices" data-field="${step.id}">${step.options.map(([value, label]) => `
+      <button class="choice${draft[step.id] === value ? " on" : ""}" data-value="${esc(value)}">
+        <span>${esc(label)}</span>${icon("i-check")}
+      </button>`).join("")}</div>`;
+  } else {
+    const attrs = step.type === "email"
+      ? `type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false"`
+      : `type="text" autocomplete="name"`;
+    field = `<input class="big-input" data-field="${step.id}" ${attrs} maxlength="80"
+      placeholder="${esc(step.placeholder)}" value="${esc(draft[step.id] || "")}" enterkeyhint="next">`;
+  }
+  return `
+    <section class="step" data-step="${step.id}">
+      <h2>${esc(step.title)}</h2>
+      ${step.hint ? `<p class="hint">${esc(step.hint)}</p>` : ""}
+      ${field}
+    </section>`;
+}
+
+function updateNav() {
+  const next = $("#wiz-next");
+  if (editing) {
+    next.textContent = "Save";
+    next.disabled = false;
+    return;
+  }
+  next.textContent = stepIndex === STEPS.length - 1 ? "Start preparing" : "Continue";
+  next.disabled = !!stepError(STEPS[stepIndex]);
+}
+
+function renderWizard(direction) {
+  const body = $("#wizard-body");
+  $("#onboarding").classList.toggle("editing", editing);
+  $("#wiz-cancel").hidden = !editing;
+  $("#form-error").textContent = "";
+
+  if (editing) {
+    body.innerHTML = `<h1 class="edit-title">Edit profile</h1>` + STEPS.map(stepHTML).join("");
+    setTelegramBack(false);
+  } else {
+    const intro = stepIndex === 0
+      ? `<div class="welcome"><span class="logo-mark big">N</span><p class="eyebrow">NUET Prep</p></div>` : "";
+    body.innerHTML = intro + stepHTML(STEPS[stepIndex]);
+    $("#wiz-progress").style.width = `${((stepIndex + 1) / STEPS.length) * 100}%`;
+    $("#wiz-count").textContent = `${stepIndex + 1}/${STEPS.length}`;
+    $("#wiz-back").style.visibility = stepIndex > 0 ? "visible" : "hidden";
+    setTelegramBack(stepIndex > 0);
+    if (direction) body.querySelector(".step").classList.add(direction === "back" ? "enter-back" : "enter-forward");
+    const input = body.querySelector("input");
+    if (input) setTimeout(() => input.focus(), 60);
+  }
+  body.scrollTop = 0;
+  updateNav();
+}
+
+function nextStep() {
+  clearTimeout(advanceTimer);
+  if (editing) return saveDraft();
+  const err = stepError(STEPS[stepIndex]);
+  if (err) {
+    $("#form-error").textContent = err;
+    haptic("error");
+    return;
+  }
+  if (stepIndex === STEPS.length - 1) return saveDraft();
+  stepIndex++;
+  haptic("light");
+  renderWizard("forward");
+}
+
+function prevStep() {
+  clearTimeout(advanceTimer);
+  if (editing || stepIndex === 0) return;
+  stepIndex--;
+  renderWizard("back");
+}
+
+function saveDraft() {
+  const bad = STEPS.find((s) => stepError(s));
+  if (bad) {
+    $("#form-error").textContent = stepError(bad);
+    const section = document.querySelector(`.step[data-step="${bad.id}"]`);
+    if (section) section.scrollIntoView({ behavior: "smooth", block: "center" });
+    haptic("error");
+    return;
+  }
+  const profile = {};
+  STEPS.forEach((s) => { profile[s.id] = (draft[s.id] || "").trim(); });
+  const firstTime = !state.profile;
+  state.profile = profile;
+  save();
+  haptic("success");
+  showApp(firstTime);
+}
+
+$("#wizard-body").addEventListener("input", (e) => {
+  const field = e.target.dataset.field;
+  if (!field) return;
+  draft[field] = e.target.value;
+  $("#form-error").textContent = "";
+  updateNav();
+});
+
+// Point out a mistyped email when the student leaves the field.
+$("#wizard-body").addEventListener("focusout", (e) => {
+  if (e.target.dataset.field !== "email" || !e.target.value.trim()) return;
+  const step = STEPS.find((s) => s.id === "email");
+  $("#form-error").textContent = stepError(step);
+});
+
+$("#wizard-body").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target.dataset.field) {
+    e.preventDefault();
+    nextStep();
+  }
+});
+
+// Single-choice questions: tapping an answer moves on to the next screen.
+$("#wizard-body").addEventListener("click", (e) => {
+  const choice = e.target.closest(".choice");
+  if (!choice) return;
+  const box = choice.parentElement;
+  draft[box.dataset.field] = choice.dataset.value;
+  box.querySelectorAll(".choice").forEach((c) => c.classList.toggle("on", c === choice));
+  haptic("select");
+  updateNav();
+  if (!editing) {
+    const from = stepIndex;
+    clearTimeout(advanceTimer);
+    advanceTimer = setTimeout(() => { if (stepIndex === from) nextStep(); }, 250);
+  }
+});
+
+$("#wiz-next").addEventListener("click", nextStep);
+$("#wiz-back").addEventListener("click", prevStep);
+$("#wiz-cancel").addEventListener("click", () => showApp(false));
+
+// ---------- Screens ----------
+
+function showOnboarding() {
+  editing = !!state.profile;
+  draft = newDraft();
+  stepIndex = 0;
+  $("#app").hidden = true;
+  $("#onboarding").hidden = false;
+  renderWizard();
+}
+
+function showApp(firstTime) {
+  $("#onboarding").hidden = true;
+  $("#app").hidden = false;
+  if (firstTime) {
+    stack = [];
+    route = { view: "home" };
+  }
+  render();
+}
+
+if (tg && tg.BackButton) {
+  try {
+    tg.BackButton.onClick(() => { if ($("#onboarding").hidden) back(); else prevStep(); });
+  } catch (e) {}
+}
+
+if (state.profile) showApp(true);
+else showOnboarding();
