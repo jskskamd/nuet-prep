@@ -775,7 +775,7 @@ function renderWizard(direction) {
     setTelegramBack(false);
   } else {
     const intro = stepIndex === 0
-      ? `<div class="welcome"><span class="logo-mark big">N</span><p class="eyebrow">NUET Prep</p></div>` : "";
+      ? `<div class="welcome"><span class="logo-mark big">N</span><p class="logo">NUET<span class="logo-ext">.exe</span></p></div>` : "";
     body.innerHTML = intro + stepHTML(STEPS[stepIndex]);
     $("#wiz-progress").style.width = `${((stepIndex + 1) / STEPS.length) * 100}%`;
     $("#wiz-count").textContent = `${stepIndex + 1}/${STEPS.length}`;

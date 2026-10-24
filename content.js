@@ -1,4 +1,4 @@
-// Study material for NUET Prep. To publish something, add it to a section's `materials` list.
+// Study material for NUET.exe. To publish something, add it to a section's `materials` list.
 // See README.md for examples of each type: "lesson", "link" and "quiz".
 const SECTIONS = [
   {

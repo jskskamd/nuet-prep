@@ -1,13 +1,13 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
-  <title>NUET Prep</title>
+  <title>NUET.exe</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <!-- Bump ?v= on every release so Telegram doesn't keep serving old files. -->
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
 
@@ -52,7 +52,7 @@
   <div id="app" hidden>
     <header class="topbar">
       <button class="icon-btn" id="btn-back" aria-label="Back" hidden><svg class="icon"><use href="#i-back"/></svg></button>
-      <span class="logo"><span class="logo-mark">N</span>NUET Prep</span>
+      <span class="logo"><span class="logo-mark">N</span>NUET<span class="logo-ext">.exe</span></span>
     </header>
 
     <main id="view"></main>
@@ -83,14 +83,14 @@
           <input id="mock-ctps" type="number" inputmode="numeric" min="0" max="200" placeholder="0">
         </label>
       </div>
-      <p class="hint small" id="mock-total">Total: –</p>
+      <p class="hint small" id="mock-total">Total: вЂ“</p>
       <p class="form-error" id="mock-error" role="alert"></p>
       <button class="primary" type="submit">Save result</button>
       <button class="ghost" type="button" id="mock-cancel">Cancel</button>
     </form>
   </div>
 
-  <script src="content.js?v=3"></script>
-  <script src="app.js?v=3"></script>
+  <script src="content.js?v=4"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>

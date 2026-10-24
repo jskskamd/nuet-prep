@@ -1,4 +1,4 @@
-# NUET Prep
+# NUET.exe
 
 A Telegram Mini App with study materials for the Nazarbayev University Entrance Test (NUET):
 **Mathematics** and **Critical Thinking & Problem Solving**.
