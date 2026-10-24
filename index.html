@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>NUET Prep</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <!-- Bump ?v= on every release so Telegram doesn't keep serving old files. -->
+  <link rel="stylesheet" href="style.css?v=1">
+</head>
+<body>
+
+  <!-- Line icons, reused with <svg><use href="#i-name"/></svg> -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></symbol>
+      <symbol id="i-math" viewBox="0 0 24 24"><path d="M7 4v6M4 7h6M14 7h6M4.5 14.5l5 5M9.5 14.5l-5 5M14 15.5h6M14 19h6"/></symbol>
+      <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1 1.9V16h5v-.2c0-.8.4-1.5 1-1.9A6 6 0 0 0 12 3z"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+      <symbol id="i-next" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M5 5.5A2.5 2.5 0 0 1 7.5 3H19v15H7.5A2.5 2.5 0 0 0 5 20.5z"/><path d="M5 20.5A2.5 2.5 0 0 1 7.5 18H19v3H7.5"/></symbol>
+      <symbol id="i-quiz" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 11l2 2 4-4M9 17h6"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+    </defs>
+  </svg>
+
+  <header class="topbar">
+    <button class="icon-btn" id="btn-back" aria-label="Back" hidden><svg class="icon"><use href="#i-back"/></svg></button>
+    <span class="logo"><span class="logo-mark">N</span>NUET Prep</span>
+  </header>
+
+  <main id="view"></main>
+
+  <nav class="tabs">
+    <button data-tab="home"><svg class="icon"><use href="#i-home"/></svg>Home</button>
+    <button data-tab="math"><svg class="icon"><use href="#i-math"/></svg>Math</button>
+    <button data-tab="ctps"><svg class="icon"><use href="#i-bulb"/></svg>CTPS</button>
+  </nav>
+
+  <script src="content.js?v=1"></script>
+  <script src="app.js?v=1"></script>
+</body>
+</html>
