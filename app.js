@@ -218,11 +218,21 @@ function render() {
     if (b.dataset.tab === activeTab) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   });
+  renderProfileButton();
 
   $("#btn-back").hidden = stack.length === 0;
   setTelegramBack(stack.length > 0);
   window.scrollTo(0, 0);
   drawMockChart();
+}
+
+// The round photo in the top bar that opens the profile (before sign-up, a person icon).
+function renderProfileButton() {
+  const btn = $("#btn-profile");
+  btn.innerHTML = state.profile ? avatarHTML(state.profile.name, { ...myPhoto(), cls: "xs" })
+    : `<span class="avatar xs">${icon("i-user")}</span>`;
+  if (route.view === "profile") btn.setAttribute("aria-current", "page");
+  else btn.removeAttribute("aria-current");
 }
 
 // ---------- Views ----------
@@ -2238,6 +2248,7 @@ document.querySelector(".tabs").addEventListener("click", (e) => {
 });
 
 $("#btn-back").addEventListener("click", back);
+$("#btn-profile").addEventListener("click", () => openTab("profile"));
 
 // The creator's channel, shown as a small label in the top bar and a credit on Home.
 const CHANNEL_URL = "https://t.me/chalkaandetc";
@@ -2336,7 +2347,7 @@ function renderWizard(direction) {
     body.innerHTML = `<h1 class="edit-title">Edit profile</h1>` + steps.map(stepHTML).join("");
   } else {
     const intro = stepIndex === 0
-      ? `<div class="welcome"><span class="logo-mark big"><img src="logo.png?v=19" alt=""></span><p class="logo"><span class="logo-name">NUET<span class="logo-ext">.exe</span></span></p></div>` : "";
+      ? `<div class="welcome"><span class="logo-mark big"><img src="logo.png?v=20" alt=""></span><p class="logo"><span class="logo-name">NUET<span class="logo-ext">.exe</span></span></p></div>` : "";
     const login = stepIndex === 0 && accountsReady && !account.user
       ? `<p class="hint login-line">Already have an account? <button type="button" class="link-btn" data-open-login>Log in</button></p>` : "";
     body.innerHTML = intro + stepHTML(steps[stepIndex]) + login;
