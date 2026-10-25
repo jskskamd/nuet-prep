@@ -148,6 +148,15 @@ function initials(name) {
   return name.trim().split(/\s+/).slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join("") || "?";
 }
 
+// A round avatar: the photo on top of the initials. `photo` is this device's own picture;
+// otherwise `userId` loads the account's uploaded one, and when there is none the image
+// fails to load, removes itself and the initials show.
+function avatarHTML(name, { photo = "", userId = "", cls = "" } = {}) {
+  const src = photo || (userId && accountsReady ? photoURL(userId) : "");
+  return `<span class="avatar ${cls}">${esc(initials(name))}${src
+    ? `<img src="${esc(src)}" alt="" onerror="this.remove()">` : ""}</span>`;
+}
+
 // ---------- Navigation ----------
 
 let route = { view: "home" };
@@ -878,7 +887,13 @@ function profileHTML() {
 
   return `
     <section class="profile-hero">
-      <span class="avatar">${esc(initials(p.name))}</span>
+      <label class="avatar-edit" aria-label="Change profile photo">
+        ${avatarHTML(p.name, myPhoto())}
+        <span class="avatar-badge">${icon("i-camera")}</span>
+        <input type="file" accept="image/*" data-photo hidden>
+      </label>
+      ${p.photo ? `<button class="link-btn small" data-remove-photo>Remove photo</button>` : ""}
+      ${photoError ? `<p class="form-error">${esc(photoError)}</p>` : ""}
       <h1>${esc(p.name)}</h1>
       <p class="hint">${esc(p.email)}</p>
       <button class="pill-btn" data-edit-profile>Edit profile</button>
@@ -1368,10 +1383,89 @@ function myId() {
   return account.user ? account.user.id : null;
 }
 
-// What goes into the account: the profile minus the email, which the account already has.
+// What goes into the account: the profile minus the email, which the account already has,
+// and the photo, which is uploaded to storage instead (account data travels with every request).
 function cloudProfile(profile) {
-  const { email, ...rest } = profile;
+  const { email, photo, ...rest } = profile;
   return rest;
+}
+
+// ---------- Profile photo ----------
+// Kept in the profile on this device as a small JPEG, and with an account also uploaded to
+// the public "avatars" bucket as <account id>.jpg so forum posts can show it
+// (bucket and access rules: supabase/avatars.sql).
+
+const PHOTO_SIZE = 256;
+let photoError = "";
+
+function photoURL(userId) {
+  return `${FORUM_CONFIG.url}/storage/v1/object/public/avatars/${userId}.jpg`;
+}
+
+// avatarHTML options for this student. Once a photo was picked or removed on this device
+// (photo is a picture or null), that wins over the uploaded copy, which the browser may
+// still have cached; before that (a new device), the uploaded one is shown.
+function myPhoto() {
+  const p = state.profile;
+  if (p && p.photo !== undefined) return { photo: p.photo || "" };
+  return { userId: myId() };
+}
+
+// Crops the picked image to a centred square and shrinks it.
+async function photoDataURL(file) {
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  try {
+    img.src = url;
+    await img.decode();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+  const side = Math.min(img.naturalWidth, img.naturalHeight);
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = PHOTO_SIZE;
+  canvas.getContext("2d").drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2,
+    side, side, 0, 0, PHOTO_SIZE, PHOTO_SIZE);
+  return canvas.toDataURL("image/jpeg", 0.85);
+}
+
+async function uploadPhoto(dataURL) {
+  if (!account.user || !dataURL) return;
+  try {
+    const blob = await (await fetch(dataURL)).blob();
+    const { error } = await supa().storage.from("avatars")
+      .upload(`${myId()}.jpg`, blob, { upsert: true, contentType: "image/jpeg", cacheControl: "60" });
+    if (error) console.error(error);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function removeUploadedPhoto() {
+  if (!account.user) return;
+  try {
+    const { error } = await supa().storage.from("avatars").remove([`${myId()}.jpg`]);
+    if (error) console.error(error);
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function setPhoto(file) {
+  try {
+    state.profile.photo = await photoDataURL(file);
+    photoError = "";
+  } catch (e) {
+    console.error(e);
+    photoError = "Couldn't open that picture. Try another one.";
+    haptic("error");
+    rerenderInPlace();
+    return;
+  }
+  save();
+  haptic("success");
+  rerenderInPlace();
+  uploadPhoto(state.profile.photo);
 }
 
 if (accountsReady) {
@@ -1398,6 +1492,7 @@ async function createAccount(email, password, profile) {
   if (error) return authError(error, "Couldn't create your account. Check your connection and try again.");
   if (!data.session) return "Your account was created but needs email confirmation before you can log in.";
   account.user = data.user;
+  uploadPhoto(profile.photo);
   return "";
 }
 
@@ -1468,6 +1563,7 @@ async function logOut() {
 // Deletes the online account (and, through the database, the student's forum posts).
 async function deleteOnlineAccount() {
   if (!account.user) return;
+  await removeUploadedPhoto();
   try {
     const { error } = await supa().rpc("delete_my_account");
     if (error) console.error(error);
@@ -1667,13 +1763,16 @@ function threadHTML() {
   const info = tagInfo(t.tag);
   const section = findSection(t.section);
   const mine = (authorId) => !!myId() && authorId === myId();
+  // Your own posts show the photo on this device, so a new one appears straight away.
+  const authorAvatar = (name, authorId) => avatarHTML(name,
+    { ...(mine(authorId) ? myPhoto() : { userId: authorId }), cls: "sm" });
 
   const answers = forum.answers.map((a) => `
-    <article class="answer-post">
+    <article class="answer-post${a.pending ? " pending" : ""}">
       <div class="post-meta">
-        <span class="avatar sm">${esc(initials(a.author_name))}</span>
-        <span><strong>${esc(a.author_name)}</strong><span class="hint small"> · ${esc(relTime(a.created_at))}</span></span>
-        ${mine(a.author_id) ? `<button class="row-delete" data-forum-delete-answer="${esc(a.id)}" aria-label="Delete answer">${icon("i-x")}</button>` : ""}
+        ${authorAvatar(a.author_name, a.author_id)}
+        <span><strong>${esc(a.author_name)}</strong><span class="hint small"> · ${a.pending ? "Posting…" : esc(relTime(a.created_at))}</span></span>
+        ${mine(a.author_id) && !a.pending ? `<button class="row-delete" data-forum-delete-answer="${esc(a.id)}" aria-label="Delete answer">${icon("i-x")}</button>` : ""}
       </div>
       <p class="post-body">${esc(a.body)}</p>
     </article>`).join("");
@@ -1686,7 +1785,7 @@ function threadHTML() {
       </span>
       <h1 class="material-title">${esc(t.title)}</h1>
       <div class="post-meta">
-        <span class="avatar sm">${esc(initials(t.author_name))}</span>
+        ${authorAvatar(t.author_name, t.author_id)}
         <span><strong>${esc(t.author_name)}</strong><span class="hint small"> · ${esc(relTime(t.created_at))}</span></span>
         ${mine(t.author_id) ? `<button class="row-delete" data-forum-delete-thread="${esc(t.id)}" aria-label="Delete question">${icon("i-x")}</button>` : ""}
       </div>
@@ -1871,21 +1970,35 @@ $("#view").addEventListener("submit", async (e) => {
     $("#reply-error").textContent = "Write your answer first.";
     return;
   }
-  button.disabled = true;
+  // Show the answer straight away and save it in the background; the saved row then
+  // replaces it, or on failure it's taken out again and the text goes back in the box.
+  const threadId = route.threadId;
+  const list = forum.answers;
+  const pending = {
+    id: `pending-${Date.now()}`, created_at: new Date().toISOString(), thread_id: threadId,
+    author_id: myId(), author_name: forumName(), body, pending: true,
+  };
+  list.push(pending);
+  forum.stale = true; // the answer count in the question list
+  haptic("success");
+  rerenderInPlace();
+  const stillHere = () => route.view === "thread" && route.threadId === threadId;
   try {
     const client = await forumClient();
-    const { error } = await client.from("answers").insert({
-      thread_id: route.threadId, author_name: forumName(), body,
-    });
+    const { data, error } = await client.from("answers")
+      .insert({ thread_id: threadId, author_name: forumName(), body })
+      .select().single();
     if (error) throw error;
-    haptic("success");
-    forum.threadStale = true;
-    forum.stale = true;
-    rerenderInPlace();
+    list[list.indexOf(pending)] = data;
+    if (stillHere()) rerenderInPlace();
   } catch (err) {
     console.error(err);
+    list.splice(list.indexOf(pending), 1);
+    haptic("error");
+    if (!stillHere()) return;
+    rerenderInPlace();
+    $("#reply-body").value = body;
     $("#reply-error").textContent = "Couldn't post your answer. Please try again.";
-    button.disabled = false;
   }
 });
 
@@ -1944,6 +2057,10 @@ function quizHTML(m) {
 // ---------- App events ----------
 
 let deleteTimer = null;
+
+$("#view").addEventListener("change", (e) => {
+  if (e.target.matches("[data-photo]") && e.target.files[0]) setPhoto(e.target.files[0]);
+});
 
 $("#view").addEventListener("click", (e) => {
   // Tapping a question image opens it in the full-screen zoom viewer.
@@ -2063,6 +2180,15 @@ $("#view").addEventListener("click", (e) => {
     return;
   }
 
+  if (t.dataset.removePhoto !== undefined) {
+    state.profile.photo = null;
+    photoError = "";
+    save();
+    rerenderInPlace();
+    removeUploadedPhoto();
+    return;
+  }
+
   const s = findSection(route.sectionId);
 
   if (t.dataset.toggleDone !== undefined) {
@@ -2126,7 +2252,6 @@ document.addEventListener("click", (e) => {
 let draft = null;    // profile being created or edited
 let stepIndex = 0;
 let editing = false; // true: every question on one page; false: one question per screen
-let advanceTimer = null;
 
 function newDraft() {
   if (state.profile) return { ...state.profile, password: "" };
@@ -2211,7 +2336,7 @@ function renderWizard(direction) {
     body.innerHTML = `<h1 class="edit-title">Edit profile</h1>` + steps.map(stepHTML).join("");
   } else {
     const intro = stepIndex === 0
-      ? `<div class="welcome"><span class="logo-mark big"><img src="logo.png?v=17" alt=""></span><p class="logo"><span class="logo-name">NUET<span class="logo-ext">.exe</span></span></p></div>` : "";
+      ? `<div class="welcome"><span class="logo-mark big"><img src="logo.png?v=18" alt=""></span><p class="logo"><span class="logo-name">NUET<span class="logo-ext">.exe</span></span></p></div>` : "";
     const login = stepIndex === 0 && accountsReady && !account.user
       ? `<p class="hint login-line">Already have an account? <button type="button" class="link-btn" data-open-login>Log in</button></p>` : "";
     body.innerHTML = intro + stepHTML(steps[stepIndex]) + login;
@@ -2227,7 +2352,6 @@ function renderWizard(direction) {
 }
 
 function nextStep() {
-  clearTimeout(advanceTimer);
   if (editing) return saveDraft();
   const steps = activeSteps();
   const err = stepError(steps[stepIndex]);
@@ -2243,7 +2367,6 @@ function nextStep() {
 }
 
 function prevStep() {
-  clearTimeout(advanceTimer);
   // Going back from the first question (or out of the editor) returns to the app.
   if (editing || stepIndex === 0) {
     afterSignup = null;
@@ -2269,6 +2392,7 @@ async function saveDraft() {
   const profile = {};
   STEPS.filter((s) => s.type !== "password").forEach((s) => { profile[s.id] = (draft[s.id] || "").trim(); });
   if (editing && accountsReady) profile.email = state.profile.email;
+  if (editing && state.profile.photo !== undefined) profile.photo = state.profile.photo;
   const firstTime = !state.profile;
 
   // Finishing sign-up creates the account (or, after logging in, saves the answers to it).
@@ -2318,7 +2442,7 @@ $("#wizard-body").addEventListener("keydown", (e) => {
   }
 });
 
-// Single-choice questions: tapping an answer moves on to the next screen.
+// Single-choice questions: tapping an answer selects it; Continue moves on.
 $("#wizard-body").addEventListener("click", (e) => {
   if (e.target.closest("[data-open-login]")) {
     openLoginSheet();
@@ -2331,11 +2455,6 @@ $("#wizard-body").addEventListener("click", (e) => {
   box.querySelectorAll(".choice").forEach((c) => c.classList.toggle("on", c === choice));
   haptic("select");
   updateNav();
-  if (!editing) {
-    const from = stepIndex;
-    clearTimeout(advanceTimer);
-    advanceTimer = setTimeout(() => { if (stepIndex === from) nextStep(); }, 250);
-  }
 });
 
 $("#wiz-next").addEventListener("click", nextStep);

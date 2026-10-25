@@ -853,6 +853,7 @@ p.status { margin: 0 0 12px; }
   flex-shrink: 0;
 }
 .post-body { margin: 10px 0 0; white-space: pre-line; overflow-wrap: anywhere; line-height: 1.55; }
+.answer-post.pending { opacity: 0.6; }
 .answer-post {
   padding: 14px;
   border-radius: 16px;
@@ -891,6 +892,25 @@ p.status { margin: 0 0 12px; }
 .signup-card h2 { font-size: 1.15em; margin-bottom: 6px; }
 .signup-card .hint { margin: 0 0 4px; }
 .profile-hero .avatar .icon { width: 40px; height: 40px; }
+.avatar { position: relative; overflow: hidden; flex-shrink: 0; }
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.avatar-edit { position: relative; cursor: pointer; }
+.avatar-badge {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 0 0 3px var(--bg);
+}
+.avatar-badge .icon { width: 17px; height: 17px; }
+.profile-hero > .link-btn { margin-top: 8px; }
+.profile-hero > .form-error { margin: 8px 0 0; }
 .login-line { margin: 22px 0 0; text-align: center; }
 .login-line .link-btn { padding: 0 2px; }
 .loading { padding: 24px 0; }
