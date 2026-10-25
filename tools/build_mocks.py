@@ -101,7 +101,10 @@ for t in load_js_array(app / "tests.js", "MATH_TESTS"):
     math_pool += [{**q, "section": "math", "from": t["title"]} for q in t["questions"]]
 for t in msdc_tests:
     math_pool += [{**q, "section": "math", "from": t["title"]} for q in t["questions"]]
+# The Oxford TSA papers came later; keeping them out keeps the published mocks unchanged.
 for t in load_js_array(app / "ctps-tests.js", "CTPS_TESTS"):
+    if t["id"].startswith("tsa-oxford"):
+        continue
     ctps_pool += [{**q, "section": "ctps", "from": t["title"]} for q in t["questions"]]
 for t in mock_tests:
     for q in t["questions"]:
@@ -113,7 +116,7 @@ rng.shuffle(ctps_pool)
 for k in range(10):
     qs = math_pool[k * 30:(k + 1) * 30] + ctps_pool[k * 30:(k + 1) * 30]
     mock_tests.append({
-        "id": f"mixed-{k + 1}", "type": "test", "title": f"Mixed mock {k + 1}",
+        "id": f"mixed-{k + 1}", "type": "test", "title": f"Mock {k + 4}",
         "source": "Mixed from past papers and mock tests: 30 Math + 30 Critical Thinking & Problem Solving.",
         "minutes": 120, "unofficial": any(q.get("unofficial") for q in qs), "questions": qs,
     })
@@ -134,7 +137,7 @@ for k in range(10):
     c_from, c_to = len(new_ctps) * k // 10, len(new_ctps) * (k + 1) // 10
     qs = new_math[k * 30:(k + 1) * 30] + new_ctps[c_from:c_to]
     mock_tests.append({
-        "id": f"mixed-{k + 11}", "type": "test", "title": f"Mixed mock {k + 11}",
+        "id": f"mixed-{k + 11}", "type": "test", "title": f"Mock {k + 14}",
         "source": "Mixed from NUET mock tests 4-10 and past papers: Math + Critical Thinking & Problem Solving.",
         "minutes": 120, "unofficial": any(q.get("unofficial") for q in qs), "questions": qs,
     })

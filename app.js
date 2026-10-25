@@ -2347,7 +2347,7 @@ function renderWizard(direction) {
     body.innerHTML = `<h1 class="edit-title">Edit profile</h1>` + steps.map(stepHTML).join("");
   } else {
     const intro = stepIndex === 0
-      ? `<div class="welcome"><span class="logo-mark big"><img src="logo.png?v=20" alt=""></span><p class="logo"><span class="logo-name">NUET<span class="logo-ext">.exe</span></span></p></div>` : "";
+      ? `<div class="welcome"><span class="logo-mark big"><img src="logo.png?v=21" alt=""></span><p class="logo"><span class="logo-name">NUET<span class="logo-ext">.exe</span></span></p></div>` : "";
     const login = stepIndex === 0 && accountsReady && !account.user
       ? `<p class="hint login-line">Already have an account? <button type="button" class="link-btn" data-open-login>Log in</button></p>` : "";
     body.innerHTML = intro + stepHTML(steps[stepIndex]) + login;

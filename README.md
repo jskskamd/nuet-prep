@@ -84,6 +84,7 @@ python tools/build_ctps.py ../materials/crit .
 - Thinking skills 1-7: NUFYPET preparation guides (tasks plus the answer key at the end)
 - ECAA Specimen, 2016-2019: Section 1 **Part A Problem Solving** only (Part B is advanced maths, not on the NUET)
 - Cambridge Thinking Skills 9694 Paper 1, May/June 2016, variants 11-13 (the other papers need written answers)
+- Oxford TSA Section 1, 2008-2020 (50 questions each, 90 minutes)
 
 `tools/extract_questions.py` does the cropping for these; it joins questions that run onto
 the next page and can remove pale watermarks.

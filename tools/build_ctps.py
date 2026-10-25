@@ -22,12 +22,18 @@ def page_index(path, text):
     return next(i for i in range(doc.page_count) if text in doc[i].get_text())
 
 
-def add(tests, test_id, title, source, minutes, paper, key, first, last, pages, min_options, key_pages=None, **crop):
+def add(tests, test_id, title, source, minutes, paper, key, first, last, pages, min_options, key_pages=None,
+        options=None, **crop):
+    """options fixes every question's option count, for papers where letters inside the
+    question text (codes, labels) would otherwise be counted as extra options."""
     answers = read_key(key, first, last, pages=key_pages)
     out_dir = app / "tests" / test_id
     for old in out_dir.glob("*.png"):
         old.unlink()  # a rebuild must not leave images from an earlier run behind
     questions = extract(paper, answers, out_dir, first, last, pages=pages, min_options=min_options, **crop)
+    if options:
+        for q in questions:
+            q["options"] = options
     tests.append({
         "id": test_id,
         "type": "test",
@@ -81,6 +87,15 @@ for variant, first_page, key_page in [("11", 0, 1), ("12", 20, 3), ("13", 40, 5)
     add(tests, f"tsa-2016-{variant}", f"Cambridge Thinking Skills 2016 · Paper {variant}",
         f"Cambridge International AS & A Level Thinking Skills 9694/{variant}, May/June 2016", 105,
         TSA_PAPER, TSA_KEY, 1, 30, range(first_page, first_page + 20), min_options=4, key_pages=[key_page])
+
+# 4. Oxford Thinking Skills Assessment, Section 1 (50 questions, options A-E), 2008-2020.
+for year in range(2008, 2021):
+    files = sorted(crit.glob(f"*tsa*oxford*{year}*"))
+    paper = next(f for f in files if "answer" not in f.name.lower())
+    key = next(f for f in files if "answer" in f.name.lower())
+    add(tests, f"tsa-oxford-{year}", f"Oxford TSA {year} · Section 1",
+        f"Thinking Skills Assessment (Oxford) {year}, Section 1", 90,
+        paper, key, 1, 50, None, min_options=5, key_pages=[0], options=5)
 
 js = (
     "// Generated from the papers in materials/crit by tools/build_ctps.py. Do not edit by hand.\n"
