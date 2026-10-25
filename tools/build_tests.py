@@ -47,8 +47,35 @@ for test_id, title, paper, key in PAPERS:
     })
     print(f"{test_id}: {len(data['questions'])} questions")
 
+# NUFYPET Math practice tests from mathdevelopment.kz (math_1..12.pdf): 30 questions each,
+# answer key on the last page. Timed at the NUET pace of 2 minutes a question.
+sys.path.insert(0, str(Path(__file__).parent))
+import pymupdf  # noqa: E402
+from extract_questions import extract as extract_paper, read_key  # noqa: E402
+
+for n in range(1, 13):
+    paper = materials / f"math_{n}.pdf"
+    doc = pymupdf.open(paper)
+    key_page = next(i for i in range(doc.page_count) if "Answer key" in doc[i].get_text())
+    test_id = f"nufypet-math-{n}"
+    out_dir = app / "tests" / test_id
+    for old in out_dir.glob("*.png"):
+        old.unlink()
+    questions = extract_paper(paper, read_key(paper, 1, 30, pages=[key_page]), out_dir, 1, 30,
+                              pages=range(1, key_page), min_options=5)
+    tests.append({
+        "id": test_id,
+        "type": "test",
+        "title": f"NUFYPET Math {n}",
+        "source": "NUFYPET Math practice test (mathdevelopment.kz)",
+        "minutes": 60,
+        "questions": [{"image": f"tests/{test_id}/{q['image']}", "options": q["options"], "answer": q["answer"]}
+                      for q in questions],
+    })
+    print(f"{test_id}: {len(questions)} questions")
+
 js = (
-    "// Generated from the NSAA past papers in materials/math by build_tests.py. Do not edit by hand.\n"
+    "// Generated from the past papers and practice tests in materials/math by build_tests.py. Do not edit by hand.\n"
     "// Each question is an image of the original; `answer` is the option index (0 = A).\n"
     f"const MATH_TESTS = {json.dumps(tests, indent=2, ensure_ascii=False)};\n"
 )

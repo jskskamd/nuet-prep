@@ -98,6 +98,8 @@ for n in (1, 2, 3):
 # Mixed mocks from every answered question.
 math_pool, ctps_pool = [], []
 for t in load_js_array(app / "tests.js", "MATH_TESTS"):
+    if t["id"].startswith("nufypet-math"):
+        continue  # added later; kept out so the published mocks don't reshuffle
     math_pool += [{**q, "section": "math", "from": t["title"]} for q in t["questions"]]
 for t in msdc_tests:
     math_pool += [{**q, "section": "math", "from": t["title"]} for q in t["questions"]]

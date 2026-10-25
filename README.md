@@ -73,6 +73,7 @@ python tools/build_tests.py ../materials/math .
 ```
 
 To add another paper, add a line to `PAPERS` in `tools/build_tests.py`.
+The same script also builds the 12 NUFYPET Math practice tests (`math_1.pdf`..`math_12.pdf`, answer key on each last page).
 
 The CTPS section's tests come from `../materials/crit` and are built the same way into
 `ctps-tests.js` (don't edit it by hand):

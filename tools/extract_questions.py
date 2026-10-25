@@ -14,7 +14,8 @@ SCALE = 2.5           # render resolution (1 = 72 dpi)
 PAD = 6               # pt of space kept above a question
 LEFT_MARGIN_MAX = 95  # question numbers sit at the left margin, x < this (pt)
 NOISE = re.compile(r"UCLES|Turn over|BLANK PAGE|NUFYPET PREP|^\s*\d{1,3}\s*$|9694/\d\d/|Cambridge International"
-                   r"|@math_msdc|NUET Math ID|Edhouse")
+                   r"|@math_msdc|NUET Math ID|Edhouse"
+                   r"|mathdevelopment.kz|NUFYPET Math v")
 # A question number: "12", "12." or "12)" followed by a space or the end of the line.
 NUMBER = re.compile(r"(\d{1,2})(?:[.)]|\s|$)")
 # Cyrillic letters that look like Latin answer letters (some keys were typed with them).
