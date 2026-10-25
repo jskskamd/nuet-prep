@@ -99,6 +99,21 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .logo { display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 1.1em; letter-spacing: -0.01em; }
 .logo-name { white-space: nowrap; }
+/* Channel watermark: small and faint so it never competes with the app. */
+.channel-tag {
+  margin-left: auto;
+  padding: 4px 2px;
+  border: none;
+  background: none;
+  color: var(--hint);
+  font-size: 0.75em;
+  font-weight: 500;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+.channel-tag:hover { opacity: 1; }
+.credit { margin: 6px 0 0; text-align: center; color: var(--hint); font-size: 0.8em; opacity: 0.8; }
+.credit .link-btn { font-size: 1em; padding: 0; }
 .logo-ext { font-weight: 500; color: var(--accent-2); }
 .welcome .logo { margin: 0; font-size: 1.2em; }
 .logo-mark {

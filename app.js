@@ -262,7 +262,8 @@ function homeHTML() {
       : signupCardHTML("Sign up to open the Math and CTPS materials, take timed tests and track your scores.")}
     <h2 class="list-title">Sections</h2>
     <div class="section-list">${cards}</div>
-    <p class="note">New materials are added regularly. Check back soon.</p>`;
+    <p class="note">New materials are added regularly. Check back soon.</p>
+    <p class="credit">Made by <button class="link-btn" data-channel>@chalkaandetc</button></p>`;
 }
 
 // ---------- Home cards: targets, mistake notebook ----------
@@ -2095,6 +2096,14 @@ document.querySelector(".tabs").addEventListener("click", (e) => {
 });
 
 $("#btn-back").addEventListener("click", back);
+
+// The creator's channel, shown as a small label in the top bar and a credit on Home.
+const CHANNEL_URL = "https://t.me/chalkaandetc";
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("[data-channel]")) return;
+  if (tg && tg.openTelegramLink) tg.openTelegramLink(CHANNEL_URL);
+  else window.open(CHANNEL_URL, "_blank");
+});
 
 // ---------- Sign-up wizard ----------
 
