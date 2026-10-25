@@ -860,6 +860,19 @@ p.status { margin: 0 0 12px; }
 .reply-form .form-error { margin-top: 8px; }
 .tagged { display: flex; align-items: center; gap: 6px; margin: 0 0 12px; color: var(--accent-2); }
 .discuss-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.account-cta {
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px dashed var(--line);
+  text-align: center;
+}
+.account-cta .hint { margin: 0; }
+.account-panel { margin-top: 14px; padding-bottom: 14px; }
+.account-panel > .hint { margin: 6px 0 0; }
+.account-panel .secondary, .account-panel .primary { margin-top: 12px; }
+.login-line { margin: 22px 0 0; text-align: center; }
+.login-line .link-btn { padding: 0 2px; }
 .loading { padding: 24px 0; }
 
 /* ---------- Mock result form ---------- */

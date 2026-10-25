@@ -39,7 +39,11 @@ const STEPS = [
   { id: "name", type: "text", label: "Name", title: "What's your name?",
     hint: "So we know what to call you.", placeholder: "Your full name" },
   { id: "email", type: "email", label: "Email", title: "What's your email?",
-    hint: "This is your account email. For now it's saved only on this device.", placeholder: "you@example.com" },
+    hint: "You'll use it to log in to your account.", placeholder: "you@example.com" },
+  // Only asked when creating an account; never stored in the profile.
+  { id: "password", type: "password", label: "Password", title: "Create a password",
+    hint: "At least 8 characters. Use it with your email to log in on another device.", placeholder: "Password",
+    signupOnly: true },
   { id: "grade", type: "choice", label: "Grade", title: "Which grade are you in?",
     options: [["10", "Grade 10"], ["11", "Grade 11"], ["12", "Grade 12"], ["graduated", "Already graduated"]] },
   { id: "mock", type: "choice", label: "Mock tests", title: "Have you ever done an NUET mock test?",
@@ -857,8 +861,29 @@ function profileHTML() {
       ${rows}
     </section>
 
-    <p class="note">Your profile and progress are saved on this device.</p>
+    ${accountPanelHTML()}
+
+    <p class="note">Your progress and scores are saved on this device.</p>
     <button class="ghost danger" data-delete-account>Delete my account</button>`;
+}
+
+function accountPanelHTML() {
+  if (!accountsReady) return "";
+  if (account.user) {
+    return `
+      <section class="panel account-panel">
+        <h2 class="list-title">Account</h2>
+        <div class="info-row"><span class="hint">Signed in as</span><strong>${esc(account.user.email)}</strong></div>
+        <button class="secondary" data-log-out>Log out</button>
+      </section>`;
+  }
+  return `
+    <section class="panel account-panel">
+      <h2 class="list-title">Account</h2>
+      <p class="hint">Create an account to post in the forum and keep your profile when you switch devices.</p>
+      <button class="primary" data-create-account>Create account</button>
+      <button class="ghost" data-open-login>I already have an account</button>
+    </section>`;
 }
 
 // ---------- Statistics ----------
@@ -1195,11 +1220,14 @@ $("#sheet-form").addEventListener("submit", async (e) => {
   save();
   haptic("success");
   closeSheet();
-  render();
+  // Logging in from the sign-up screens happens before there's a profile to show.
+  if (!$("#app").hidden) render();
 });
 
 $("#sheet-form").addEventListener("click", (e) => {
   if (e.target.closest("[data-close-sheet]")) closeSheet();
+  else if (e.target.closest("[data-open-login]")) openLoginSheet();
+  else if (e.target.closest("[data-open-signup]")) openSignupSheet();
 });
 
 // Tapping the dark area outside a form closes it.
@@ -1283,33 +1311,157 @@ function addQuizMistake(section, material, qi, chosen) {
   else state.mistakes.unshift({ id: Date.now(), ...entry });
 }
 
+// ---------- Accounts ----------
+// Students register with email and password (Supabase Auth). The profile answers are
+// stored with the account, so logging in on another device brings them back.
+// The session itself is kept by the Supabase library in this device's storage.
+
+const accountsReady = typeof FORUM_CONFIG !== "undefined" && !!FORUM_CONFIG.url && !!FORUM_CONFIG.anonKey && !!window.supabase;
+const PASSWORD_MIN = 8;
+const account = { user: null };
+let supabaseClient = null;
+
+function supa() {
+  if (!supabaseClient) supabaseClient = window.supabase.createClient(FORUM_CONFIG.url, FORUM_CONFIG.anonKey);
+  return supabaseClient;
+}
+
+function myId() {
+  return account.user ? account.user.id : null;
+}
+
+// What goes into the account: the profile minus the email, which the account already has.
+function cloudProfile(profile) {
+  const { email, ...rest } = profile;
+  return rest;
+}
+
+if (accountsReady) {
+  supa().auth.onAuthStateChange((_event, session) => {
+    const before = myId();
+    account.user = session ? session.user : null;
+    if (myId() !== before && !$("#app").hidden) rerenderInPlace();
+  });
+}
+
+function authError(error, fallback) {
+  const msg = (error && error.message) || "";
+  if (/already (registered|exists)/i.test(msg)) return "This email already has an account. Log in instead.";
+  if (/invalid login credentials/i.test(msg)) return "Wrong email or password.";
+  if (/email not confirmed/i.test(msg)) return "This account still needs its email confirmed.";
+  if (/password/i.test(msg)) return `Please use a stronger password (at least ${PASSWORD_MIN} characters).`;
+  if (/rate limit|too many/i.test(msg)) return "Too many attempts. Please wait a few minutes and try again.";
+  return fallback;
+}
+
+// Returns an error message, or "" when the account was created and signed in.
+async function createAccount(email, password, profile) {
+  const { data, error } = await supa().auth.signUp({ email, password, options: { data: { profile: cloudProfile(profile) } } });
+  if (error) return authError(error, "Couldn't create your account. Check your connection and try again.");
+  if (!data.session) return "Your account was created but needs email confirmation before you can log in.";
+  account.user = data.user;
+  return "";
+}
+
+function syncProfile(profile) {
+  if (!account.user) return;
+  supa().auth.updateUser({ data: { profile: cloudProfile(profile) } }).catch((e) => console.error(e));
+}
+
+function accountFields(email) {
+  return `
+    <label class="field">Email
+      <input id="acc-email" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" value="${esc(email || "")}">
+    </label>
+    <label class="field">Password
+      <input id="acc-password" type="password" autocomplete="current-password" placeholder="At least ${PASSWORD_MIN} characters">
+    </label>`;
+}
+
+function openLoginSheet() {
+  openSheet("Log in", `
+    ${accountFields(state.profile ? state.profile.email : "")}
+    <p class="hint small">Don't have an account? ${state.profile
+      ? `<button type="button" class="link-btn" data-open-signup>Create one</button>`
+      : "Close this and answer the sign-up questions."}</p>`,
+  async () => {
+    const email = $("#acc-email").value.trim();
+    const password = $("#acc-password").value;
+    if (!EMAIL_RE.test(email) || !password) return "Enter your email and password.";
+    const { data, error } = await supa().auth.signInWithPassword({ email, password });
+    if (error) return authError(error, "Couldn't log in. Check your connection and try again.");
+    account.user = data.user;
+    const cloud = data.user.user_metadata && data.user.user_metadata.profile;
+    const fromSignUp = !state.profile;
+    if (cloud) state.profile = { ...cloud, email: data.user.email };
+    if (fromSignUp && !cloud) {
+      // An account without saved answers: finish the sign-up questions instead.
+      setTimeout(() => { draft.email = data.user.email; stepIndex = 0; renderWizard(); });
+      return "";
+    }
+    setTimeout(() => showApp(fromSignUp));
+    return "";
+  }, "Log in");
+}
+
+function openSignupSheet() {
+  openSheet("Create your account", `
+    <p class="hint">With an account you can post in the forum and log in on other devices.</p>
+    ${accountFields(state.profile.email)}
+    <p class="hint small">Already have an account? <button type="button" class="link-btn" data-open-login>Log in</button></p>`,
+  async () => {
+    const email = $("#acc-email").value.trim();
+    const password = $("#acc-password").value;
+    if (!EMAIL_RE.test(email)) return "That email doesn't look right.";
+    if (password.length < PASSWORD_MIN) return `Your password needs at least ${PASSWORD_MIN} characters.`;
+    const err = await createAccount(email, password, state.profile);
+    if (err) return err;
+    state.profile.email = email;
+    return "";
+  }, "Create account");
+}
+
+async function logOut() {
+  try { await supa().auth.signOut(); } catch (e) { console.error(e); }
+  account.user = null;
+  rerenderInPlace();
+}
+
+// Deletes the online account (and, through the database, the student's forum posts).
+async function deleteOnlineAccount() {
+  if (!account.user) return;
+  try {
+    const { error } = await supa().rpc("delete_my_account");
+    if (error) console.error(error);
+    await supa().auth.signOut();
+  } catch (e) {
+    console.error(e);
+  }
+  account.user = null;
+}
+
 // ---------- Forum ----------
 // Threads and answers live in Supabase (tables and access rules: supabase/forum.sql).
-// Each device signs in anonymously once; posts show the student's profile name.
+// Anyone can read; posting needs an account. Posts show the student's profile name.
 
-const forumReady = typeof FORUM_CONFIG !== "undefined" && !!FORUM_CONFIG.url && !!FORUM_CONFIG.anonKey && !!window.supabase;
+const forumReady = accountsReady;
 const FORUM_FILTERS = [["all", "All"], ["math", "Math"], ["ctps", "CTPS"], ["mine", "My questions"]];
 const forum = {
   filter: "all", tag: null,
   threads: null, stale: true, loading: false, error: "",
   thread: null, answers: [], threadStale: true, threadLoading: false, threadError: "",
 };
-let forumDb = null;
-let forumUserId = null;
 
 async function forumClient() {
-  if (!forumDb) forumDb = window.supabase.createClient(FORUM_CONFIG.url, FORUM_CONFIG.anonKey);
-  if (!forumUserId) {
-    const { data } = await forumDb.auth.getSession();
-    let session = data.session;
-    if (!session) {
-      const res = await forumDb.auth.signInAnonymously();
-      if (res.error) throw res.error;
-      session = res.data.session;
-    }
-    forumUserId = session.user.id;
-  }
-  return forumDb;
+  return supa();
+}
+
+// Posting needs an account; without one, offer to create it (or log in) first.
+function requireAccount() {
+  if (account.user) return true;
+  if (state.profile) openSignupSheet();
+  else openLoginSheet();
+  return false;
 }
 
 // "Rip van Winkle" -> "Rip V."
@@ -1354,7 +1506,7 @@ async function loadThreads() {
       .order("created_at", { ascending: false })
       .limit(100);
     if (forum.tag) query = query.eq("tag", forum.tag);
-    else if (forum.filter === "mine") query = query.eq("author_id", forumUserId);
+    else if (forum.filter === "mine") query = query.eq("author_id", myId() || "00000000-0000-0000-0000-000000000000");
     else if (forum.filter !== "all") query = query.eq("section", forum.filter);
     const { data, error } = await query;
     if (error) throw error;
@@ -1466,7 +1618,7 @@ function threadHTML() {
   }
   const info = tagInfo(t.tag);
   const section = findSection(t.section);
-  const mine = (authorId) => authorId === forumUserId;
+  const mine = (authorId) => !!myId() && authorId === myId();
 
   const answers = forum.answers.map((a) => `
     <article class="answer-post">
@@ -1497,11 +1649,16 @@ function threadHTML() {
     <h2 class="list-title">${forum.answers.length} ${forum.answers.length === 1 ? "answer" : "answers"}</h2>
     <div class="answer-list">${answers || `<p class="hint">No answers yet. Know how to solve it?</p>`}</div>
 
+    ${account.user ? `
     <form class="reply-form" id="reply-form" novalidate>
       <textarea id="reply-body" rows="3" maxlength="3000" placeholder="Write an answer…"></textarea>
       <p class="form-error" id="reply-error" role="alert"></p>
       <button class="primary" type="submit">Post answer</button>
-    </form>`;
+    </form>` : `
+    <div class="account-cta">
+      <p class="hint">Create an account to answer questions.</p>
+      <button class="primary" data-need-account>Create account or log in</button>
+    </div>`}`;
 }
 
 function openAskSheet(tag) {
@@ -1611,10 +1768,13 @@ function handleForumClick(t) {
   if (ds.forumRetry !== undefined) { forum.stale = true; render(); return true; }
   if (ds.threadRetry !== undefined) { forum.threadStale = true; render(); return true; }
   if (ds.forumAsk !== undefined) {
-    if (!forumReady) return true;
-    openAskSheet(ds.forumAsk || null);
+    if (forumReady && requireAccount()) openAskSheet(ds.forumAsk || null);
     return true;
   }
+  if (ds.needAccount !== undefined) { requireAccount(); return true; }
+  if (ds.createAccount !== undefined) { openSignupSheet(); return true; }
+  if (ds.openLogin !== undefined) { openLoginSheet(); return true; }
+  if (ds.logOut !== undefined) { logOut(); return true; }
   if (ds.openThread) { openThread(ds.openThread); return true; }
   if (ds.discuss) {
     forum.tag = ds.discuss;
@@ -1623,7 +1783,7 @@ function handleForumClick(t) {
     return true;
   }
   if (ds.askAbout) {
-    if (forumReady) openAskSheet(ds.askAbout);
+    if (forumReady && requireAccount()) openAskSheet(ds.askAbout);
     return true;
   }
   if (ds.forumDeleteThread) {
@@ -1834,10 +1994,14 @@ $("#view").addEventListener("click", (e) => {
     }
     clearTimeout(deleteTimer);
     deleteTimer = null;
-    state = freshState();
-    done = new Set();
-    save();
-    return showOnboarding();
+    t.disabled = true;
+    deleteOnlineAccount().finally(() => {
+      state = freshState();
+      done = new Set();
+      save();
+      showOnboarding();
+    });
+    return;
   }
 
   const s = findSection(route.sectionId);
@@ -1898,11 +2062,16 @@ let editing = false; // true: every question on one page; false: one question pe
 let advanceTimer = null;
 
 function newDraft() {
-  if (state.profile) return { ...state.profile };
+  if (state.profile) return { ...state.profile, password: "" };
   const tgName = tgUser ? [tgUser.first_name, tgUser.last_name].filter(Boolean).join(" ") : "";
   const draft = { name: tgName };
   STEPS.forEach((s) => { if (!(s.id in draft)) draft[s.id] = ""; });
   return draft;
+}
+
+// The password step only appears when sign-up will create a new account.
+function activeSteps() {
+  return STEPS.filter((s) => !s.signupOnly || (!editing && accountsReady && !account.user));
 }
 
 function stepError(step) {
@@ -1912,27 +2081,38 @@ function stepError(step) {
     if (!value) return "Please enter your email.";
     return EMAIL_RE.test(value) ? "" : "That email doesn't look right.";
   }
+  if (step.type === "password") {
+    return (draft.password || "").length >= PASSWORD_MIN ? "" : `Your password needs at least ${PASSWORD_MIN} characters.`;
+  }
   return value ? "" : "Please choose one option.";
 }
 
 function stepHTML(step) {
   let field;
+  let hint = step.hint;
   if (step.type === "choice") {
     field = `<div class="choices" data-field="${step.id}">${step.options.map(([value, label]) => `
       <button class="choice${draft[step.id] === value ? " on" : ""}" data-value="${esc(value)}">
         <span>${esc(label)}</span>${icon("i-check")}
       </button>`).join("")}</div>`;
   } else {
-    const attrs = step.type === "email"
-      ? `type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false"`
-      : `type="text" autocomplete="name"`;
+    let attrs = `type="text" autocomplete="name"`;
+    if (step.type === "email") {
+      attrs = `type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false"`;
+      // The email is the login, so it can't be changed from the profile editor.
+      if (editing && accountsReady) {
+        attrs += " disabled";
+        hint = "This is your login email, so it can't be changed here.";
+      }
+    }
+    if (step.type === "password") attrs = `type="password" autocomplete="new-password"`;
     field = `<input class="big-input" data-field="${step.id}" ${attrs} maxlength="80"
       placeholder="${esc(step.placeholder)}" value="${esc(draft[step.id] || "")}" enterkeyhint="next">`;
   }
   return `
     <section class="step" data-step="${step.id}">
       <h2>${esc(step.title)}</h2>
-      ${step.hint ? `<p class="hint">${esc(step.hint)}</p>` : ""}
+      ${hint ? `<p class="hint">${esc(hint)}</p>` : ""}
       ${field}
     </section>`;
 }
@@ -1944,8 +2124,9 @@ function updateNav() {
     next.disabled = false;
     return;
   }
-  next.textContent = stepIndex === STEPS.length - 1 ? "Start preparing" : "Continue";
-  next.disabled = !!stepError(STEPS[stepIndex]);
+  const steps = activeSteps();
+  next.textContent = stepIndex === steps.length - 1 ? "Start preparing" : "Continue";
+  next.disabled = !!stepError(steps[stepIndex]);
 }
 
 function renderWizard(direction) {
@@ -1954,15 +2135,18 @@ function renderWizard(direction) {
   $("#wiz-cancel").hidden = !editing;
   $("#form-error").textContent = "";
 
+  const steps = activeSteps();
   if (editing) {
-    body.innerHTML = `<h1 class="edit-title">Edit profile</h1>` + STEPS.map(stepHTML).join("");
+    body.innerHTML = `<h1 class="edit-title">Edit profile</h1>` + steps.map(stepHTML).join("");
     setTelegramBack(false);
   } else {
     const intro = stepIndex === 0
       ? `<div class="welcome"><span class="logo-mark big">N</span><p class="logo"><span class="logo-name">NUET<span class="logo-ext">.exe</span></span></p></div>` : "";
-    body.innerHTML = intro + stepHTML(STEPS[stepIndex]);
-    $("#wiz-progress").style.width = `${((stepIndex + 1) / STEPS.length) * 100}%`;
-    $("#wiz-count").textContent = `${stepIndex + 1}/${STEPS.length}`;
+    const login = stepIndex === 0 && accountsReady && !account.user
+      ? `<p class="hint login-line">Already have an account? <button type="button" class="link-btn" data-open-login>Log in</button></p>` : "";
+    body.innerHTML = intro + stepHTML(steps[stepIndex]) + login;
+    $("#wiz-progress").style.width = `${((stepIndex + 1) / steps.length) * 100}%`;
+    $("#wiz-count").textContent = `${stepIndex + 1}/${steps.length}`;
     $("#wiz-back").style.visibility = stepIndex > 0 ? "visible" : "hidden";
     setTelegramBack(stepIndex > 0);
     if (direction) body.querySelector(".step").classList.add(direction === "back" ? "enter-back" : "enter-forward");
@@ -1976,13 +2160,14 @@ function renderWizard(direction) {
 function nextStep() {
   clearTimeout(advanceTimer);
   if (editing) return saveDraft();
-  const err = stepError(STEPS[stepIndex]);
+  const steps = activeSteps();
+  const err = stepError(steps[stepIndex]);
   if (err) {
     $("#form-error").textContent = err;
     haptic("error");
     return;
   }
-  if (stepIndex === STEPS.length - 1) return saveDraft();
+  if (stepIndex === steps.length - 1) return saveDraft();
   stepIndex++;
   haptic("light");
   renderWizard("forward");
@@ -1995,8 +2180,11 @@ function prevStep() {
   renderWizard("back");
 }
 
-function saveDraft() {
-  const bad = STEPS.find((s) => stepError(s));
+let saving = false;
+
+async function saveDraft() {
+  if (saving) return;
+  const bad = activeSteps().find((s) => stepError(s));
   if (bad) {
     $("#form-error").textContent = stepError(bad);
     const section = document.querySelector(`.step[data-step="${bad.id}"]`);
@@ -2005,8 +2193,29 @@ function saveDraft() {
     return;
   }
   const profile = {};
-  STEPS.forEach((s) => { profile[s.id] = (draft[s.id] || "").trim(); });
+  STEPS.filter((s) => s.type !== "password").forEach((s) => { profile[s.id] = (draft[s.id] || "").trim(); });
+  if (editing && accountsReady) profile.email = state.profile.email;
   const firstTime = !state.profile;
+
+  // Finishing sign-up creates the account (or, after logging in, saves the answers to it).
+  if (firstTime && accountsReady) {
+    const next = $("#wiz-next");
+    saving = true;
+    next.disabled = true;
+    next.textContent = "Creating your account…";
+    const err = account.user ? (syncProfile(profile), "") : await createAccount(profile.email, draft.password, profile);
+    saving = false;
+    updateNav();
+    if (err) {
+      $("#form-error").textContent = err;
+      haptic("error");
+      return;
+    }
+  } else if (account.user) {
+    syncProfile(profile);
+  }
+
+  draft.password = "";
   state.profile = profile;
   save();
   haptic("success");
@@ -2037,6 +2246,10 @@ $("#wizard-body").addEventListener("keydown", (e) => {
 
 // Single-choice questions: tapping an answer moves on to the next screen.
 $("#wizard-body").addEventListener("click", (e) => {
+  if (e.target.closest("[data-open-login]")) {
+    openLoginSheet();
+    return;
+  }
   const choice = e.target.closest(".choice");
   if (!choice) return;
   const box = choice.parentElement;
