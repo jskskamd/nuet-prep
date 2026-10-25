@@ -1509,13 +1509,23 @@ function forumName() {
   return (parts.length > 1 ? `${parts[0]} ${parts[parts.length - 1][0].toUpperCase()}.` : parts[0]).slice(0, 40);
 }
 
+// Every timed test in every section, with the section it belongs to.
+function allTests() {
+  return SECTIONS.flatMap((s) => s.materials.filter((m) => m.type === "test").map((test) => ({ test, section: s.id })));
+}
+
+// Short but unique name for a test, e.g. "NSAA 2016" or "Cambridge Thinking Skills 2016 · Paper 11".
+function testLabel(test) {
+  return test.title.replace(/ · (Part A Mathematics|Problem Solving)$/, "");
+}
+
 // A tag points at one test question, e.g. "nsaa-2016:5" is question 5 of NSAA 2016.
 function tagInfo(tag) {
-  if (!tag || typeof MATH_TESTS === "undefined") return null;
+  if (!tag) return null;
   const [testId, n] = tag.split(":");
-  const test = MATH_TESTS.find((t) => t.id === testId);
-  const q = test && test.questions[Number(n) - 1];
-  return q ? { label: `${test.title.split(" · ")[0]} · Q${n}`, image: q.image, num: Number(n) } : null;
+  const found = allTests().find((x) => x.test.id === testId);
+  const q = found && found.test.questions[Number(n) - 1];
+  return q ? { label: `${testLabel(found.test)} · Q${n}`, image: q.image, num: Number(n), section: found.section } : null;
 }
 
 function relTime(iso) {
@@ -1701,17 +1711,21 @@ function threadHTML() {
 
 function openAskSheet(tag) {
   const info = tagInfo(tag);
-  const tests = typeof MATH_TESTS === "undefined" ? [] : MATH_TESTS;
-  const sectionDefault = info ? "math" : forum.filter === "ctps" ? "ctps" : forum.filter === "math" ? "math"
+  const tests = allTests();
+  const sectionDefault = info ? info.section : forum.filter === "ctps" ? "ctps" : forum.filter === "math" ? "math"
     : state.profile && state.profile.focus === "ctps" ? "ctps" : "math";
   const sectionOptions = SECTIONS.map((s) =>
     `<option value="${s.id}"${s.id === sectionDefault ? " selected" : ""}>${esc(s.title)}</option>`).join("");
+  const testOptions = SECTIONS.map((s) => {
+    const list = tests.filter((x) => x.section === s.id);
+    return list.length ? `<optgroup label="${esc(s.short)}">${list.map(({ test }) =>
+      `<option value="${esc(test.id)}">${esc(testLabel(test))}</option>`).join("")}</optgroup>` : "";
+  }).join("");
   const tagField = info
     ? `<p class="tagged">${icon("i-check", "icon tiny")} About <b>${esc(info.label)}</b></p>`
     : `<div class="field-row">
         <label class="field">Tag a test <span class="hint">(optional)</span>
-          <select id="ask-test"><option value="">None</option>${tests.map((t) =>
-            `<option value="${esc(t.id)}">${esc(t.title.split(" · ")[0])}</option>`).join("")}</select>
+          <select id="ask-test"><option value="">None</option>${testOptions}</select>
         </label>
         <label class="field">Question
           <select id="ask-question" disabled><option value="">–</option></select>
@@ -1738,10 +1752,11 @@ function openAskSheet(tag) {
       if (!$("#ask-question").value) return "Choose which question of the test, or set the test back to None.";
       postTag = `${$("#ask-test").value}:${$("#ask-question").value}`;
     }
+    const tagged = tagInfo(postTag);
     const client = await forumClient();
     const { error } = await client.from("threads").insert({
       author_name: forumName(),
-      section: postTag ? "math" : $("#ask-section").value,
+      section: tagged ? tagged.section : $("#ask-section").value,
       tag: postTag,
       title,
       body: $("#ask-body").value.trim(),
@@ -1756,7 +1771,8 @@ function openAskSheet(tag) {
 
   if (!info) {
     $("#ask-test").addEventListener("change", (e) => {
-      const test = tests.find((t) => t.id === e.target.value);
+      const found = tests.find((x) => x.test.id === e.target.value);
+      const test = found && found.test;
       const select = $("#ask-question");
       select.disabled = !test;
       select.innerHTML = test

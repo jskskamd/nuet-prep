@@ -74,6 +74,20 @@ python tools/build_tests.py ../materials/math .
 
 To add another paper, add a line to `PAPERS` in `tools/build_tests.py`.
 
+The CTPS section's tests come from `../materials/crit` and are built the same way into
+`ctps-tests.js` (don't edit it by hand):
+
+```
+python tools/build_ctps.py ../materials/crit .
+```
+
+- Thinking skills 1-7: NUFYPET preparation guides (tasks plus the answer key at the end)
+- ECAA Specimen, 2016-2019: Section 1 **Part A Problem Solving** only (Part B is advanced maths, not on the NUET)
+- Cambridge Thinking Skills 9694 Paper 1, May/June 2016, variants 11-13 (the other papers need written answers)
+
+`tools/extract_questions.py` does the cropping for these; it joins questions that run onto
+the next page and can remove pale watermarks.
+
 ## Publishing changes
 
 After editing, bump the `?v=` number on the `<link>` and `<script>` tags in `index.html`

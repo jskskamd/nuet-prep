@@ -18,6 +18,9 @@ const SECTIONS = [
     short: "CTPS",
     icon: "i-bulb",
     description: "Lessons and practice for the Critical Thinking and Problem Solving section.",
-    materials: [],
+    // Thinking-skills practice and timed past papers (ctps-tests.js), then anything added by hand below.
+    materials: [
+      ...CTPS_TESTS,
+    ],
   },
 ];
