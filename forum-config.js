@@ -4,5 +4,5 @@
 // With anonKey empty, accounts are off and the Forum tab shows "coming soon".
 const FORUM_CONFIG = {
   url: "https://ylikzijegwoxrrtbswyl.supabase.co",
-  anonKey: "",
+  anonKey: "sb_publishable_sCYVq54MOSw7Q_78GWSDMA_PednV-sw",
 };
