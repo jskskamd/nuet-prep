@@ -871,6 +871,10 @@ p.status { margin: 0 0 12px; }
 .account-panel { margin-top: 14px; padding-bottom: 14px; }
 .account-panel > .hint { margin: 6px 0 0; }
 .account-panel .secondary, .account-panel .primary { margin-top: 12px; }
+.signup-card { text-align: center; padding: 20px 16px 10px; border-color: rgba(59, 123, 255, 0.45); }
+.signup-card h2 { font-size: 1.15em; margin-bottom: 6px; }
+.signup-card .hint { margin: 0 0 4px; }
+.profile-hero .avatar .icon { width: 40px; height: 40px; }
 .login-line { margin: 22px 0 0; text-align: center; }
 .login-line .link-btn { padding: 0 2px; }
 .loading { padding: 24px 0; }

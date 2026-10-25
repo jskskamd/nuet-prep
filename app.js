@@ -164,9 +164,26 @@ function back() {
   render();
 }
 
+// Materials need an account: a guest opening Math or CTPS gets the sign-up questions first,
+// then lands where they were going.
+let afterSignup = null;
+
+function startSignup(next) {
+  afterSignup = next || null;
+  showOnboarding();
+}
+
+function needsSignup(next) {
+  if (state.profile) return false;
+  startSignup(next);
+  return true;
+}
+
 function openTab(name) {
+  const isSection = !["home", "profile", "forum"].includes(name);
+  if (isSection && needsSignup({ view: "section", sectionId: name })) return;
   stack = [];
-  route = ["home", "profile", "forum"].includes(name) ? { view: name } : { view: "section", sectionId: name };
+  route = isSection ? { view: "section", sectionId: name } : { view: name };
   if (name === "forum") {
     forum.tag = null;
     forum.stale = true;
@@ -201,9 +218,19 @@ function render() {
 
 // ---------- Views ----------
 
+function signupCardHTML(text) {
+  return `
+    <section class="home-panel signup-card">
+      <h2>Start practicing for free</h2>
+      <p class="hint">${esc(text)}</p>
+      <button class="primary" data-start-signup>Sign up</button>
+      ${accountsReady ? `<button class="ghost" data-open-login>I already have an account</button>` : ""}
+    </section>`;
+}
+
 function homeHTML() {
-  const p = state.profile;
-  const firstName = p.name.trim().split(/\s+/)[0];
+  const p = state.profile || {};
+  const firstName = state.profile ? p.name.trim().split(/\s+/)[0] : "";
   const cards = SECTIONS.map((s) => {
     const prog = sectionProgress(s);
     const status = prog.total
@@ -226,12 +253,13 @@ function homeHTML() {
 
   return `
     <section class="hero">
-      <p class="eyebrow">Hi, ${esc(firstName)}</p>
+      <p class="eyebrow">${firstName ? `Hi, ${esc(firstName)}` : "Nazarbayev University Entrance Test"}</p>
       <h1>Get ready for the NUET</h1>
       <p class="hint">Study materials and practice for both test sections, all in Telegram.</p>
     </section>
-    ${targetsHTML()}
-    ${notebookCardHTML()}
+    ${state.profile
+      ? targetsHTML() + notebookCardHTML()
+      : signupCardHTML("Sign up to open the Math and CTPS materials, take timed tests and track your scores.")}
     <h2 class="list-title">Sections</h2>
     <div class="section-list">${cards}</div>
     <p class="note">New materials are added regularly. Check back soon.</p>`;
@@ -829,6 +857,15 @@ function doneButton(finished) {
 }
 
 function profileHTML() {
+  if (!state.profile) {
+    return `
+      <section class="profile-hero">
+        <span class="avatar">${icon("i-user")}</span>
+        <h1>Your profile</h1>
+        <p class="hint">Sign up to keep track of your scores, mock tests and mistakes.</p>
+      </section>
+      ${signupCardHTML("It takes a minute: a few questions about you and your NUET plans.")}`;
+  }
   const p = state.profile;
   const math = sectionProgress(findSection("math"));
   const ctps = sectionProgress(findSection("ctps"));
@@ -1460,7 +1497,7 @@ async function forumClient() {
 function requireAccount() {
   if (account.user) return true;
   if (state.profile) openSignupSheet();
-  else openLoginSheet();
+  else startSignup({ ...route });
   return false;
 }
 
@@ -1665,7 +1702,7 @@ function openAskSheet(tag) {
   const info = tagInfo(tag);
   const tests = typeof MATH_TESTS === "undefined" ? [] : MATH_TESTS;
   const sectionDefault = info ? "math" : forum.filter === "ctps" ? "ctps" : forum.filter === "math" ? "math"
-    : state.profile.focus === "ctps" ? "ctps" : "math";
+    : state.profile && state.profile.focus === "ctps" ? "ctps" : "math";
   const sectionOptions = SECTIONS.map((s) =>
     `<option value="${s.id}"${s.id === sectionDefault ? " selected" : ""}>${esc(s.title)}</option>`).join("");
   const tagField = info
@@ -1903,7 +1940,12 @@ $("#view").addEventListener("click", (e) => {
   const t = e.target.closest("button");
   if (!t) return;
 
-  if (t.dataset.openSection) return go({ view: "section", sectionId: t.dataset.openSection });
+  if (t.dataset.openSection) {
+    const next = { view: "section", sectionId: t.dataset.openSection };
+    if (!needsSignup(next)) go(next);
+    return;
+  }
+  if (t.dataset.startSignup !== undefined) return startSignup();
 
   if (handleForumClick(t)) return;
   if (handleTestClick(t)) return;
@@ -1999,7 +2041,7 @@ $("#view").addEventListener("click", (e) => {
       state = freshState();
       done = new Set();
       save();
-      showOnboarding();
+      showApp(true);
     });
     return;
   }
@@ -2136,9 +2178,12 @@ function renderWizard(direction) {
   $("#form-error").textContent = "";
 
   const steps = activeSteps();
+  // Sign-up is optional until materials are opened, so there's always a way back to the app.
+  $("#wiz-cancel").textContent = editing ? "Cancel" : "Not now";
+  $("#wiz-cancel").hidden = false;
+  setTelegramBack(true);
   if (editing) {
     body.innerHTML = `<h1 class="edit-title">Edit profile</h1>` + steps.map(stepHTML).join("");
-    setTelegramBack(false);
   } else {
     const intro = stepIndex === 0
       ? `<div class="welcome"><span class="logo-mark big">N</span><p class="logo"><span class="logo-name">NUET<span class="logo-ext">.exe</span></span></p></div>` : "";
@@ -2148,7 +2193,6 @@ function renderWizard(direction) {
     $("#wiz-progress").style.width = `${((stepIndex + 1) / steps.length) * 100}%`;
     $("#wiz-count").textContent = `${stepIndex + 1}/${steps.length}`;
     $("#wiz-back").style.visibility = stepIndex > 0 ? "visible" : "hidden";
-    setTelegramBack(stepIndex > 0);
     if (direction) body.querySelector(".step").classList.add(direction === "back" ? "enter-back" : "enter-forward");
     const input = body.querySelector("input");
     if (input) setTimeout(() => input.focus(), 60);
@@ -2175,7 +2219,12 @@ function nextStep() {
 
 function prevStep() {
   clearTimeout(advanceTimer);
-  if (editing || stepIndex === 0) return;
+  // Going back from the first question (or out of the editor) returns to the app.
+  if (editing || stepIndex === 0) {
+    afterSignup = null;
+    showApp(false);
+    return;
+  }
   stepIndex--;
   renderWizard("back");
 }
@@ -2266,7 +2315,10 @@ $("#wizard-body").addEventListener("click", (e) => {
 
 $("#wiz-next").addEventListener("click", nextStep);
 $("#wiz-back").addEventListener("click", prevStep);
-$("#wiz-cancel").addEventListener("click", () => showApp(false));
+$("#wiz-cancel").addEventListener("click", () => {
+  afterSignup = null;
+  showApp(false);
+});
 
 // ---------- Screens ----------
 
@@ -2285,6 +2337,12 @@ function showApp(firstTime) {
   if (firstTime) {
     stack = [];
     route = { view: "home" };
+    // Just signed up on the way to something: go there, with Home behind it.
+    if (afterSignup && state.profile) {
+      stack = [{ view: "home" }];
+      route = afterSignup;
+    }
+    afterSignup = null;
   }
   render();
 }
@@ -2299,5 +2357,5 @@ if (tg && tg.BackButton) {
   } catch (e) {}
 }
 
-if (state.profile) showApp(true);
-else showOnboarding();
+// The app opens for everyone; sign-up happens when a guest opens the materials.
+showApp(true);
