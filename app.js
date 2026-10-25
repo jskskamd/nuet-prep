@@ -162,7 +162,11 @@ function back() {
 
 function openTab(name) {
   stack = [];
-  route = name === "home" || name === "profile" ? { view: name } : { view: "section", sectionId: name };
+  route = ["home", "profile", "forum"].includes(name) ? { view: name } : { view: "section", sectionId: name };
+  if (name === "forum") {
+    forum.tag = null;
+    forum.stale = true;
+  }
   haptic("select");
   render();
 }
@@ -173,10 +177,13 @@ function render() {
   else if (route.view === "material") view.innerHTML = materialHTML(findSection(route.sectionId), route.index);
   else if (route.view === "profile") view.innerHTML = profileHTML();
   else if (route.view === "notebook") view.innerHTML = notebookHTML();
+  else if (route.view === "forum") view.innerHTML = forumHTML();
+  else if (route.view === "thread") view.innerHTML = threadHTML();
   else view.innerHTML = homeHTML();
 
   const activeTab = route.view === "notebook" ? "home"
-    : route.view === "home" || route.view === "profile" ? route.view : route.sectionId;
+    : route.view === "thread" ? "forum"
+    : ["home", "profile", "forum"].includes(route.view) ? route.view : route.sectionId;
   document.querySelectorAll(".tabs button").forEach((b) => {
     if (b.dataset.tab === activeTab) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
@@ -571,6 +578,10 @@ function testResultHTML(s, m, run) {
       <div class="review-detail">
         ${questionFigure(q, `Question ${i + 1}`)}
         <p class="status good">${icon("i-check")}<span>Correct answer: ${letter(q.answer)}</span></p>
+        ${forumReady ? `<div class="discuss-row">
+          <button class="secondary small-btn" data-discuss="${esc(m.id)}:${i + 1}">${icon("i-forum")} See discussion</button>
+          <button class="secondary small-btn" data-ask-about="${esc(m.id)}:${i + 1}">Ask about it</button>
+        </div>` : ""}
       </div>` : "";
     return `
       <button class="review-row ${status}" data-review="${i}">
@@ -598,6 +609,143 @@ function testResultHTML(s, m, run) {
     <button class="primary" data-retake-test>Retake test</button>
     <button class="secondary" data-close-test>Done</button>`;
 }
+
+// ---------- Zoom viewer ----------
+// Pinch (two fingers) or mouse wheel to zoom, double-tap to toggle zoom at that spot,
+// drag with one finger to move around a zoomed image.
+
+const VIEWER_MAX = 5;
+const view = { scale: 1, x: 0, y: 0, pointers: new Map(), pinch: null, pan: null, lastTap: 0 };
+
+function viewerOpen() {
+  return !$("#viewer").hidden;
+}
+
+function openViewer(src, alt) {
+  const img = $("#viewer-img");
+  img.src = src;
+  img.alt = alt || "";
+  Object.assign(view, { scale: 1, x: 0, y: 0, pinch: null, pan: null });
+  view.pointers.clear();
+  applyViewer();
+  $("#viewer").hidden = false;
+  setTelegramBack(true);
+  // A downward drag would otherwise close the whole Mini App.
+  try { if (tg && tg.isVersionAtLeast("7.7")) tg.disableVerticalSwipes(); } catch (e) {}
+}
+
+function closeViewer() {
+  $("#viewer").hidden = true;
+  try { if (tg && tg.isVersionAtLeast("7.7")) tg.enableVerticalSwipes(); } catch (e) {}
+  setTelegramBack(!$("#onboarding").hidden ? stepIndex > 0 : stack.length > 0);
+}
+
+// Lets any part of a zoomed image be moved to the middle of the screen, but no further,
+// so the image can't be dragged away entirely.
+function clampViewer() {
+  const img = $("#viewer-img");
+  const maxX = (img.offsetWidth * view.scale) / 2;
+  const maxY = (img.offsetHeight * view.scale) / 2;
+  view.x = Math.max(-maxX, Math.min(maxX, view.x));
+  view.y = Math.max(-maxY, Math.min(maxY, view.y));
+}
+
+function applyViewer() {
+  if (view.scale <= 1.01) { view.scale = 1; view.x = 0; view.y = 0; }
+  clampViewer();
+  $("#viewer-img").style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+}
+
+// Zooms to `scale` while keeping the point (px, py) of the screen under the finger.
+function zoomAt(scale, px, py) {
+  const s = Math.max(1, Math.min(VIEWER_MAX, scale));
+  const cx = window.innerWidth / 2 + view.x;
+  const cy = window.innerHeight / 2 + view.y;
+  view.x += (px - cx) * (1 - s / view.scale);
+  view.y += (py - cy) * (1 - s / view.scale);
+  view.scale = s;
+  applyViewer();
+}
+
+const stage = $("#viewer-stage");
+const pointerDistance = () => {
+  const [a, b] = [...view.pointers.values()];
+  return Math.hypot(a.x - b.x, a.y - b.y);
+};
+const pointerMiddle = () => {
+  const [a, b] = [...view.pointers.values()];
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+};
+
+stage.addEventListener("pointerdown", (e) => {
+  stage.setPointerCapture(e.pointerId);
+  view.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (view.pointers.size === 2) {
+    view.pinch = { dist: pointerDistance(), scale: view.scale };
+    view.pan = null;
+  } else if (view.pointers.size === 1) {
+    view.pan = { x: e.clientX, y: e.clientY, ox: view.x, oy: view.y, moved: false };
+  }
+});
+
+stage.addEventListener("pointermove", (e) => {
+  if (!view.pointers.has(e.pointerId)) return;
+  view.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (view.pinch && view.pointers.size === 2) {
+    const mid = pointerMiddle();
+    zoomAt(view.pinch.scale * (pointerDistance() / view.pinch.dist), mid.x, mid.y);
+  } else if (view.pan) {
+    const dx = e.clientX - view.pan.x;
+    const dy = e.clientY - view.pan.y;
+    if (Math.abs(dx) + Math.abs(dy) > 6) view.pan.moved = true;
+    if (view.scale > 1) {
+      view.x = view.pan.ox + dx;
+      view.y = view.pan.oy + dy;
+      applyViewer();
+    }
+  }
+});
+
+function endPointer(e) {
+  if (!view.pointers.has(e.pointerId)) return;
+  const tapped = view.pan && !view.pan.moved && view.pointers.size === 1 && !view.pinch;
+  view.pointers.delete(e.pointerId);
+  if (view.pointers.size < 2) view.pinch = null;
+  if (view.pointers.size === 1) {
+    const [p] = [...view.pointers.values()];
+    view.pan = { x: p.x, y: p.y, ox: view.x, oy: view.y, moved: true };
+  } else if (view.pointers.size === 0) {
+    view.pan = null;
+  }
+  if (!tapped) return;
+
+  const now = Date.now();
+  if (now - view.lastTap < 300) {
+    view.lastTap = 0;
+    if (view.scale > 1) { view.scale = 1; applyViewer(); }
+    else zoomAt(2.5, e.clientX, e.clientY);
+  } else {
+    view.lastTap = now;
+  }
+}
+stage.addEventListener("pointerup", endPointer);
+stage.addEventListener("pointercancel", endPointer);
+
+stage.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  zoomAt(view.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX, e.clientY);
+}, { passive: false });
+
+$("#viewer-close").addEventListener("click", closeViewer);
+
+// Buttons for mouse users: zoom around the middle of the screen.
+$("#viewer").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-zoom-step]");
+  if (!b) return;
+  const step = b.dataset.zoomStep;
+  if (step === "reset") { view.scale = 1; applyViewer(); return; }
+  zoomAt(view.scale * (step === "in" ? 1.5 : 1 / 1.5), window.innerWidth / 2, window.innerHeight / 2);
+});
 
 // Returns true when the click belonged to a timed test.
 function handleTestClick(t) {
@@ -1010,12 +1158,12 @@ $("#mock-form").addEventListener("submit", (e) => {
 
 let sheetSubmit = null; // returns an error message, or "" when the form saved
 
-function openSheet(title, fieldsHTML, onSubmit) {
+function openSheet(title, fieldsHTML, onSubmit, submitLabel = "Save") {
   $("#sheet-form").innerHTML = `
     <h2>${esc(title)}</h2>
     ${fieldsHTML}
     <p class="form-error" id="sheet-error" role="alert"></p>
-    <button class="primary" type="submit">Save</button>
+    <button class="primary" type="submit">${esc(submitLabel)}</button>
     <button class="ghost" type="button" data-close-sheet>Cancel</button>`;
   sheetSubmit = onSubmit;
   $("#sheet-modal").hidden = false;
@@ -1026,9 +1174,19 @@ function closeSheet() {
   sheetSubmit = null;
 }
 
-$("#sheet-form").addEventListener("submit", (e) => {
+// onSubmit may also return a Promise (forum posts are saved over the network).
+$("#sheet-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const err = sheetSubmit ? sheetSubmit() : "";
+  const button = e.target.querySelector('[type="submit"]');
+  if (button.disabled) return;
+  button.disabled = true;
+  let err;
+  try {
+    err = sheetSubmit ? await sheetSubmit() : "";
+  } catch (error) {
+    err = "Something went wrong. Check your connection and try again.";
+  }
+  button.disabled = false;
   if (err) {
     $("#sheet-error").textContent = err;
     haptic("error");
@@ -1125,6 +1283,398 @@ function addQuizMistake(section, material, qi, chosen) {
   else state.mistakes.unshift({ id: Date.now(), ...entry });
 }
 
+// ---------- Forum ----------
+// Threads and answers live in Supabase (tables and access rules: supabase/forum.sql).
+// Each device signs in anonymously once; posts show the student's profile name.
+
+const forumReady = typeof FORUM_CONFIG !== "undefined" && !!FORUM_CONFIG.url && !!FORUM_CONFIG.anonKey && !!window.supabase;
+const FORUM_FILTERS = [["all", "All"], ["math", "Math"], ["ctps", "CTPS"], ["mine", "My questions"]];
+const forum = {
+  filter: "all", tag: null,
+  threads: null, stale: true, loading: false, error: "",
+  thread: null, answers: [], threadStale: true, threadLoading: false, threadError: "",
+};
+let forumDb = null;
+let forumUserId = null;
+
+async function forumClient() {
+  if (!forumDb) forumDb = window.supabase.createClient(FORUM_CONFIG.url, FORUM_CONFIG.anonKey);
+  if (!forumUserId) {
+    const { data } = await forumDb.auth.getSession();
+    let session = data.session;
+    if (!session) {
+      const res = await forumDb.auth.signInAnonymously();
+      if (res.error) throw res.error;
+      session = res.data.session;
+    }
+    forumUserId = session.user.id;
+  }
+  return forumDb;
+}
+
+// "Rip van Winkle" -> "Rip V."
+function forumName() {
+  const parts = (state.profile ? state.profile.name : "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "Student";
+  return (parts.length > 1 ? `${parts[0]} ${parts[parts.length - 1][0].toUpperCase()}.` : parts[0]).slice(0, 40);
+}
+
+// A tag points at one test question, e.g. "nsaa-2016:5" is question 5 of NSAA 2016.
+function tagInfo(tag) {
+  if (!tag || typeof MATH_TESTS === "undefined") return null;
+  const [testId, n] = tag.split(":");
+  const test = MATH_TESTS.find((t) => t.id === testId);
+  const q = test && test.questions[Number(n) - 1];
+  return q ? { label: `${test.title.split(" · ")[0]} · Q${n}`, image: q.image, num: Number(n) } : null;
+}
+
+function relTime(iso) {
+  const sec = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (sec < 60) return "just now";
+  if (sec < 3600) return `${Math.floor(sec / 60)} min ago`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)} h ago`;
+  if (sec < 7 * 86400) return `${Math.floor(sec / 86400)} d ago`;
+  return timestampDate(new Date(iso).getTime());
+}
+
+function rerenderInPlace() {
+  const y = window.scrollY;
+  render();
+  window.scrollTo(0, y);
+}
+
+async function loadThreads() {
+  forum.stale = false;
+  forum.loading = true;
+  forum.error = "";
+  try {
+    const client = await forumClient();
+    let query = client.from("threads")
+      .select("id, created_at, author_id, author_name, section, tag, title, answers(count)")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (forum.tag) query = query.eq("tag", forum.tag);
+    else if (forum.filter === "mine") query = query.eq("author_id", forumUserId);
+    else if (forum.filter !== "all") query = query.eq("section", forum.filter);
+    const { data, error } = await query;
+    if (error) throw error;
+    forum.threads = data;
+  } catch (e) {
+    console.error(e);
+    forum.error = "Couldn't load the forum. Check your connection and try again.";
+  }
+  forum.loading = false;
+  if (route.view === "forum") rerenderInPlace();
+}
+
+async function loadThread() {
+  forum.threadStale = false;
+  forum.threadLoading = true;
+  forum.threadError = "";
+  const id = route.threadId;
+  try {
+    const client = await forumClient();
+    const [t, a] = await Promise.all([
+      client.from("threads").select("*").eq("id", id).maybeSingle(),
+      client.from("answers").select("*").eq("thread_id", id).order("created_at"),
+    ]);
+    if (t.error || a.error) throw t.error || a.error;
+    forum.thread = t.data;
+    forum.answers = a.data;
+  } catch (e) {
+    console.error(e);
+    forum.threadError = "Couldn't load this question. Check your connection and try again.";
+  }
+  forum.threadLoading = false;
+  if (route.view === "thread" && route.threadId === id) rerenderInPlace();
+}
+
+function openThread(id) {
+  forum.thread = null;
+  forum.answers = [];
+  forum.threadStale = true;
+  go({ view: "thread", threadId: id });
+}
+
+function forumHTML() {
+  const head = `
+    <section class="section-head">
+      <span class="section-icon big">${icon("i-forum")}</span>
+      <h1>Forum</h1>
+      <p class="hint">Stuck on a question? Ask here, and help others with theirs.</p>
+    </section>`;
+  if (!forumReady) {
+    return `${head}
+      <div class="empty">
+        <span class="empty-icon">${icon("i-clock")}</span>
+        <h3>The forum is coming soon</h3>
+        <p class="hint">It opens as soon as its database is connected.</p>
+      </div>`;
+  }
+  if (forum.stale && !forum.loading) setTimeout(loadThreads, 0);
+
+  const info = tagInfo(forum.tag);
+  const chips = forum.tag
+    ? `<button class="filter on" data-forum-clear-tag>${esc(info ? info.label : forum.tag)} ${icon("i-x", "icon tiny")}</button>`
+    : FORUM_FILTERS.map(([id, label]) =>
+        `<button class="filter${forum.filter === id ? " on" : ""}" data-forum-filter="${id}">${label}</button>`).join("");
+
+  let list;
+  if (forum.error) {
+    list = `<div class="empty"><p class="hint">${esc(forum.error)}</p><button class="secondary" data-forum-retry>Try again</button></div>`;
+  } else if (!forum.threads || (forum.loading && !forum.threads.length)) {
+    list = `<p class="hint center loading">Loading…</p>`;
+  } else if (!forum.threads.length) {
+    list = `<div class="empty"><p class="hint">${forum.tag ? "No one has asked about this question yet." : "No questions here yet. Be the first to ask!"}</p></div>`;
+  } else {
+    list = forum.threads.map((t) => {
+      const count = t.answers && t.answers[0] ? t.answers[0].count : 0;
+      const ti = tagInfo(t.tag);
+      const section = findSection(t.section);
+      return `
+        <button class="thread-card" data-open-thread="${esc(t.id)}">
+          <span class="thread-tags">
+            <span class="tag">${esc(section ? section.short : t.section)}</span>
+            ${ti ? `<span class="tag q">${esc(ti.label)}</span>` : ""}
+          </span>
+          <strong>${esc(t.title)}</strong>
+          <span class="hint small">${esc(t.author_name)} · ${esc(relTime(t.created_at))} · ${count} ${count === 1 ? "answer" : "answers"}</span>
+        </button>`;
+    }).join("");
+  }
+
+  const tagFigure = info
+    ? `<figure class="q-figure" data-zoom><img class="q-img" src="${esc(info.image)}" alt="${esc(info.label)}" loading="lazy"></figure>` : "";
+
+  return `${head}
+    <button class="primary" data-forum-ask="${esc(forum.tag || "")}">${icon("i-plus")} Ask a question</button>
+    <div class="filters">${chips}</div>
+    ${tagFigure}
+    <div class="thread-list">${list}</div>`;
+}
+
+function threadHTML() {
+  if (forum.threadStale && !forum.threadLoading) setTimeout(loadThread, 0);
+  if (forum.threadError) {
+    return `<div class="empty"><p class="hint">${esc(forum.threadError)}</p><button class="secondary" data-thread-retry>Try again</button></div>`;
+  }
+  const t = forum.thread;
+  if (!t) {
+    return forum.threadLoading || forum.threadStale
+      ? `<p class="hint center loading">Loading…</p>`
+      : `<div class="empty"><p class="hint">This question was deleted.</p></div>`;
+  }
+  const info = tagInfo(t.tag);
+  const section = findSection(t.section);
+  const mine = (authorId) => authorId === forumUserId;
+
+  const answers = forum.answers.map((a) => `
+    <article class="answer-post">
+      <div class="post-meta">
+        <span class="avatar sm">${esc(initials(a.author_name))}</span>
+        <span><strong>${esc(a.author_name)}</strong><span class="hint small"> · ${esc(relTime(a.created_at))}</span></span>
+        ${mine(a.author_id) ? `<button class="row-delete" data-forum-delete-answer="${esc(a.id)}" aria-label="Delete answer">${icon("i-x")}</button>` : ""}
+      </div>
+      <p class="post-body">${esc(a.body)}</p>
+    </article>`).join("");
+
+  return `
+    <article class="thread-post">
+      <span class="thread-tags">
+        <span class="tag">${esc(section ? section.short : t.section)}</span>
+        ${info ? `<span class="tag q">${esc(info.label)}</span>` : ""}
+      </span>
+      <h1 class="material-title">${esc(t.title)}</h1>
+      <div class="post-meta">
+        <span class="avatar sm">${esc(initials(t.author_name))}</span>
+        <span><strong>${esc(t.author_name)}</strong><span class="hint small"> · ${esc(relTime(t.created_at))}</span></span>
+        ${mine(t.author_id) ? `<button class="row-delete" data-forum-delete-thread="${esc(t.id)}" aria-label="Delete question">${icon("i-x")}</button>` : ""}
+      </div>
+      ${t.body ? `<p class="post-body">${esc(t.body)}</p>` : ""}
+      ${info ? `<figure class="q-figure" data-zoom><img class="q-img" src="${esc(info.image)}" alt="${esc(info.label)}"></figure>` : ""}
+    </article>
+
+    <h2 class="list-title">${forum.answers.length} ${forum.answers.length === 1 ? "answer" : "answers"}</h2>
+    <div class="answer-list">${answers || `<p class="hint">No answers yet. Know how to solve it?</p>`}</div>
+
+    <form class="reply-form" id="reply-form" novalidate>
+      <textarea id="reply-body" rows="3" maxlength="3000" placeholder="Write an answer…"></textarea>
+      <p class="form-error" id="reply-error" role="alert"></p>
+      <button class="primary" type="submit">Post answer</button>
+    </form>`;
+}
+
+function openAskSheet(tag) {
+  const info = tagInfo(tag);
+  const tests = typeof MATH_TESTS === "undefined" ? [] : MATH_TESTS;
+  const sectionDefault = info ? "math" : forum.filter === "ctps" ? "ctps" : forum.filter === "math" ? "math"
+    : state.profile.focus === "ctps" ? "ctps" : "math";
+  const sectionOptions = SECTIONS.map((s) =>
+    `<option value="${s.id}"${s.id === sectionDefault ? " selected" : ""}>${esc(s.title)}</option>`).join("");
+  const tagField = info
+    ? `<p class="tagged">${icon("i-check", "icon tiny")} About <b>${esc(info.label)}</b></p>`
+    : `<div class="field-row">
+        <label class="field">Tag a test <span class="hint">(optional)</span>
+          <select id="ask-test"><option value="">None</option>${tests.map((t) =>
+            `<option value="${esc(t.id)}">${esc(t.title.split(" · ")[0])}</option>`).join("")}</select>
+        </label>
+        <label class="field">Question
+          <select id="ask-question" disabled><option value="">–</option></select>
+        </label>
+      </div>`;
+
+  openSheet("Ask a question", `
+    <label class="field">Your question
+      <input id="ask-title" maxlength="150" placeholder="For example, how do you solve question 5?">
+    </label>
+    <label class="field">Details <span class="hint">(optional)</span>
+      <textarea id="ask-body" rows="4" maxlength="3000" placeholder="What did you try? Where did you get stuck?"></textarea>
+    </label>
+    <label class="field">Section
+      <select id="ask-section">${sectionOptions}</select>
+    </label>
+    ${tagField}
+    <p class="hint small">Posted as ${esc(forumName())}. Everyone using the app can see it.</p>`,
+  async () => {
+    const title = $("#ask-title").value.trim();
+    if (title.length < 3) return "Please write your question (at least 3 characters).";
+    let postTag = tag || null;
+    if (!info && $("#ask-test").value) {
+      if (!$("#ask-question").value) return "Choose which question of the test, or set the test back to None.";
+      postTag = `${$("#ask-test").value}:${$("#ask-question").value}`;
+    }
+    const client = await forumClient();
+    const { error } = await client.from("threads").insert({
+      author_name: forumName(),
+      section: postTag ? "math" : $("#ask-section").value,
+      tag: postTag,
+      title,
+      body: $("#ask-body").value.trim(),
+    });
+    if (error) {
+      console.error(error);
+      return "Couldn't post your question. Please try again.";
+    }
+    forum.stale = true;
+    return "";
+  }, "Post question");
+
+  if (!info) {
+    $("#ask-test").addEventListener("change", (e) => {
+      const test = tests.find((t) => t.id === e.target.value);
+      const select = $("#ask-question");
+      select.disabled = !test;
+      select.innerHTML = test
+        ? `<option value="">Choose…</option>` + test.questions.map((_, i) => `<option value="${i + 1}">Q${i + 1}</option>`).join("")
+        : `<option value="">–</option>`;
+    });
+  }
+}
+
+// Two-tap delete for forum posts; returns true once the second tap arrives.
+function confirmTap(t) {
+  if (t.classList.contains("armed")) return true;
+  t.classList.add("armed");
+  haptic("rigid");
+  setTimeout(() => t.classList.remove("armed"), 3000);
+  return false;
+}
+
+async function deleteForumRow(table, id) {
+  try {
+    const client = await forumClient();
+    const { error } = await client.from(table).delete().eq("id", id);
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    console.error(e);
+    return false;
+  }
+}
+
+// Returns true when the click belonged to the forum.
+function handleForumClick(t) {
+  const ds = t.dataset;
+  if (ds.forumFilter) {
+    forum.filter = ds.forumFilter;
+    forum.stale = true;
+    haptic("select");
+    rerenderInPlace();
+    return true;
+  }
+  if (ds.forumClearTag !== undefined) {
+    forum.tag = null;
+    forum.stale = true;
+    rerenderInPlace();
+    return true;
+  }
+  if (ds.forumRetry !== undefined) { forum.stale = true; render(); return true; }
+  if (ds.threadRetry !== undefined) { forum.threadStale = true; render(); return true; }
+  if (ds.forumAsk !== undefined) {
+    if (!forumReady) return true;
+    openAskSheet(ds.forumAsk || null);
+    return true;
+  }
+  if (ds.openThread) { openThread(ds.openThread); return true; }
+  if (ds.discuss) {
+    forum.tag = ds.discuss;
+    forum.stale = true;
+    go({ view: "forum" });
+    return true;
+  }
+  if (ds.askAbout) {
+    if (forumReady) openAskSheet(ds.askAbout);
+    return true;
+  }
+  if (ds.forumDeleteThread) {
+    if (!confirmTap(t)) return true;
+    deleteForumRow("threads", ds.forumDeleteThread).then((ok) => {
+      if (!ok) return;
+      forum.stale = true;
+      back();
+    });
+    return true;
+  }
+  if (ds.forumDeleteAnswer) {
+    if (!confirmTap(t)) return true;
+    deleteForumRow("answers", ds.forumDeleteAnswer).then((ok) => {
+      if (!ok) return;
+      forum.threadStale = true;
+      forum.stale = true;
+      rerenderInPlace();
+    });
+    return true;
+  }
+  return false;
+}
+
+$("#view").addEventListener("submit", async (e) => {
+  if (e.target.id !== "reply-form") return;
+  e.preventDefault();
+  const button = e.target.querySelector('[type="submit"]');
+  const body = $("#reply-body").value.trim();
+  if (!body) {
+    $("#reply-error").textContent = "Write your answer first.";
+    return;
+  }
+  button.disabled = true;
+  try {
+    const client = await forumClient();
+    const { error } = await client.from("answers").insert({
+      thread_id: route.threadId, author_name: forumName(), body,
+    });
+    if (error) throw error;
+    haptic("success");
+    forum.threadStale = true;
+    forum.stale = true;
+    rerenderInPlace();
+  } catch (err) {
+    console.error(err);
+    $("#reply-error").textContent = "Couldn't post your answer. Please try again.";
+    button.disabled = false;
+  }
+});
+
 // ---------- Practice quizzes ----------
 
 let quizAnswers = {}; // question index -> chosen option index, for the open quiz
@@ -1182,12 +1732,11 @@ function quizHTML(m) {
 let deleteTimer = null;
 
 $("#view").addEventListener("click", (e) => {
-  // Tapping a question image toggles between fit-to-screen and full size (scrollable).
+  // Tapping a question image opens it in the full-screen zoom viewer.
   const figure = e.target.closest("[data-zoom]");
   if (figure) {
     const img = figure.querySelector("img");
-    const zoomed = figure.classList.toggle("zoomed");
-    img.style.width = zoomed ? `${Math.round(img.naturalWidth / 1.6)}px` : "";
+    openViewer(img.src, img.alt);
     return;
   }
 
@@ -1196,6 +1745,7 @@ $("#view").addEventListener("click", (e) => {
 
   if (t.dataset.openSection) return go({ view: "section", sectionId: t.dataset.openSection });
 
+  if (handleForumClick(t)) return;
   if (handleTestClick(t)) return;
 
   if (t.dataset.openMaterial !== undefined) {
@@ -1528,7 +2078,11 @@ function showApp(firstTime) {
 
 if (tg && tg.BackButton) {
   try {
-    tg.BackButton.onClick(() => { if ($("#onboarding").hidden) back(); else prevStep(); });
+    tg.BackButton.onClick(() => {
+      if (viewerOpen()) closeViewer();
+      else if ($("#onboarding").hidden) back();
+      else prevStep();
+    });
   } catch (e) {}
 }
 
