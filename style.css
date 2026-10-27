@@ -112,6 +112,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
   white-space: nowrap;
 }
 .channel-tag:hover { opacity: 1; }
+.channel-tag, .channel-link { display: inline-flex; align-items: center; gap: 4px; }
+.tg-icon { width: 14px; height: 14px; color: #2aabee; }
+.channel-tag .tg-icon { width: 13px; height: 13px; }
 .profile-btn { padding: 0; border: none; background: none; border-radius: 50%; }
 .profile-btn .avatar.xs {
   width: 34px;
