@@ -2347,7 +2347,7 @@ function renderWizard(direction) {
     body.innerHTML = `<h1 class="edit-title">Edit profile</h1>` + steps.map(stepHTML).join("");
   } else {
     const intro = stepIndex === 0
-      ? `<div class="welcome"><span class="logo-mark big"><img src="logo.png?v=23" alt=""></span><p class="logo"><span class="logo-name">NUET<span class="logo-ext">.exe</span></span></p></div>` : "";
+      ? `<div class="welcome"><span class="logo-mark big"><img src="logo.png?v=24" alt=""></span><p class="logo"><span class="logo-name">NUET<span class="logo-ext">.exe</span></span></p></div>` : "";
     const login = stepIndex === 0 && accountsReady && !account.user
       ? `<p class="hint login-line">Already have an account? <button type="button" class="link-btn" data-open-login>Log in</button></p>` : "";
     body.innerHTML = intro + stepHTML(steps[stepIndex]) + login;
@@ -2512,5 +2512,90 @@ if (tg && tg.BackButton) {
   } catch (e) {}
 }
 
+// ---------- Feedback ----------
+// Students who have used the app for at least a day are asked once whether it's useful.
+// Answers go to the Supabase "feedback" table (supabase/feedback.sql); one that couldn't be
+// sent (offline, table not set up yet) is kept on this device and sent next time.
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const FEEDBACK_CHOICES = [["yes", "Yes, very useful"], ["somewhat", "Somewhat"], ["no", "Not really"]];
+
+function firstUse() {
+  if (!state.firstSeen) {
+    // For people from before this was recorded, their first finished quiz or test is close enough.
+    const first = Math.min(...state.attempts.map((a) => a.at).filter(Boolean));
+    state.firstSeen = Number.isFinite(first) ? first : Date.now();
+    save();
+  }
+  return state.firstSeen;
+}
+
+function shouldAskFeedback() {
+  const f = state.feedback;
+  if (!state.profile || (f && f.answered)) return false;
+  if (f && f.later && Date.now() - f.later < 3 * DAY_MS) return false; // "Later": ask again in 3 days
+  const usedIt = state.attempts.length > 0 || done.size > 0;
+  return usedIt && Date.now() - firstUse() >= DAY_MS;
+}
+
+async function sendFeedback(entry) {
+  if (!accountsReady) return false;
+  try {
+    const { error } = await supa().from("feedback").insert(entry);
+    if (error) throw error;
+    return true;
+  } catch (e) {
+    console.error(e);
+    return false;
+  }
+}
+
+function openFeedbackSheet() {
+  let answer = "";
+  openSheet("Is this app useful for you?", `
+    <p class="hint">Your answer helps us make NUET.exe better.</p>
+    <div class="choices" id="feedback-choices">${FEEDBACK_CHOICES.map(([value, label]) => `
+      <button type="button" class="choice" data-feedback="${value}"><span>${esc(label)}</span>${icon("i-check")}</button>`).join("")}
+    </div>
+    <label class="field">What should we add or change? (optional)
+      <textarea id="feedback-comment" rows="3" maxlength="1000" placeholder="More tests, explanations, a topic you need…"></textarea>
+    </label>`,
+  async () => {
+    if (!answer) return "Choose an answer first.";
+    const entry = {
+      answer, comment: $("#feedback-comment").value.trim(),
+      tg_user_id: tgUser ? tgUser.id : null, name: state.profile ? state.profile.name.slice(0, 80) : null,
+    };
+    state.feedback = { answered: Date.now(), pending: (await sendFeedback(entry)) ? null : entry };
+    return "";
+  }, "Send");
+  // "Cancel" means "ask me later".
+  $("#sheet-form [data-close-sheet]").textContent = "Later";
+  state.feedback = { ...state.feedback, later: Date.now() };
+  save();
+  $("#feedback-choices").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-feedback]");
+    if (!b) return;
+    answer = b.dataset.feedback;
+    $("#feedback-choices").querySelectorAll(".choice").forEach((c) => c.classList.toggle("on", c === b));
+    $("#sheet-error").textContent = "";
+    haptic("select");
+  });
+}
+
+function maybeAskFeedback() {
+  const f = state.feedback;
+  if (f && f.pending) {
+    sendFeedback(f.pending).then((ok) => { if (ok) { state.feedback = { ...state.feedback, pending: null }; save(); } });
+  }
+  firstUse();
+  if (!shouldAskFeedback()) return;
+  // A moment after the app opens, and only on Home, never in the middle of a test.
+  setTimeout(() => {
+    if (route.view === "home" && $("#sheet-modal").hidden && $("#onboarding").hidden) openFeedbackSheet();
+  }, 1500);
+}
+
 // The app opens for everyone; sign-up happens when a guest opens the materials.
 showApp(true);
+maybeAskFeedback();

@@ -999,3 +999,6 @@ p.status { margin: 0 0 12px; }
   font-size: 12px;
 }
 .tabs button[aria-current="page"] { color: var(--accent-2); font-weight: 600; }
+
+/* Feedback window */
+#feedback-choices { margin: 4px 0 16px; }
