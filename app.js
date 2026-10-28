@@ -2347,7 +2347,7 @@ function renderWizard(direction) {
     body.innerHTML = `<h1 class="edit-title">Edit profile</h1>` + steps.map(stepHTML).join("");
   } else {
     const intro = stepIndex === 0
-      ? `<div class="welcome"><span class="logo-mark big"><img src="logo.png?v=24" alt=""></span><p class="logo"><span class="logo-name">NUET<span class="logo-ext">.exe</span></span></p></div>` : "";
+      ? `<div class="welcome"><span class="logo-mark big"><img src="logo.png?v=25" alt=""></span><p class="logo"><span class="logo-name">NUET<span class="logo-ext">.exe</span></span></p></div>` : "";
     const login = stepIndex === 0 && accountsReady && !account.user
       ? `<p class="hint login-line">Already have an account? <button type="button" class="link-btn" data-open-login>Log in</button></p>` : "";
     body.innerHTML = intro + stepHTML(steps[stepIndex]) + login;
@@ -2589,6 +2589,11 @@ function maybeAskFeedback() {
     sendFeedback(f.pending).then((ok) => { if (ok) { state.feedback = { ...state.feedback, pending: null }; save(); } });
   }
   firstUse();
+  // Opening the app's address with #feedback shows the window straight away, to try it out.
+  if (location.hash === "#feedback") {
+    setTimeout(openFeedbackSheet, 500);
+    return;
+  }
   if (!shouldAskFeedback()) return;
   // A moment after the app opens, and only on Home, never in the middle of a test.
   setTimeout(() => {
